@@ -49,9 +49,7 @@ namespace {@namespace} {{
                         var componentName = type.Name.Substring(1);
                         logCallback($"Generating component class \"{componentName}\" from \"{type.FullName}\"...");
 
-                        entityCode += @$"
-        public readonly {componentName} {componentName[0].ToString().ToLower() + componentName.Substring(1)};
-";
+                        GenerateStateProperty(type, componentName[0].ToString().ToLower() + componentName.Substring(1), ref entityCode, logCallback);
 
                         var componentCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
@@ -74,7 +72,7 @@ namespace {@namespace} {{
                                 var propertyName = methodInfo.Name.Substring(4);
                                 getters.Add(propertyName);
                                 if (setters.Contains(propertyName)) {
-                                    GenerateProperty(methodInfo.ReturnType, propertyName, ref componentCode, logCallback);
+                                    GenerateStateProperty(methodInfo.ReturnType, propertyName, ref componentCode, logCallback);
                                 }
                             }
 
@@ -82,7 +80,7 @@ namespace {@namespace} {{
                                 var propertyName = methodInfo.Name.Substring(4);
                                 setters.Add(propertyName);
                                 if (getters.Contains(propertyName)) {
-                                    GenerateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, ref componentCode, logCallback);
+                                    GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, ref componentCode, logCallback);
                                 }
                             }
                         }
@@ -128,14 +126,14 @@ namespace {@namespace} {{
             }
         }
 
-        private static void GenerateProperty(Type propertyType, string propertyName, ref string componentCode, Action<string> logCallback) {
+        private static void GenerateStateProperty(Type propertyType, string propertyName, ref string code, Action<string> logCallback) {
             logCallback($"Property: {propertyName}");
             var propertyTypeName = ToExpression(propertyType);
             if (differTypesAndDiffTypesByDiffableType.TryGetValue(propertyType, out Tuple<Type, Type> differTypeAndDiffType)) {
                 var differTypeName = ToExpression(differTypeAndDiffType.Item1);
                 var diffTypeName = ToExpression(differTypeAndDiffType.Item2);
 
-                componentCode += $@"
+                code += $@"
         private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
         private readonly Ring<{propertyTypeName}> {propertyName}_states = new Ring<{propertyTypeName}>();
         private readonly Ring<{diffTypeName}> {propertyName}_diffs = new Ring<{diffTypeName}>();
