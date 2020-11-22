@@ -12,7 +12,7 @@ namespace Dullahan.Unity {
             }
         }
 
-        public Quaternion Patch(Quaternion diffable, Quaternion? diff) {
+        public void Patch(ref Quaternion diffable, Quaternion? diff) {
             throw new System.NotImplementedException();
         }
     }

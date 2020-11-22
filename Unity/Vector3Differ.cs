@@ -12,7 +12,7 @@ namespace Dullahan.Unity {
             }
         }
 
-        public Vector3 Patch(Vector3 diffable, Vector3? diff) {
+        public void Patch(ref Vector3 diffable, Vector3? diff) {
             throw new System.NotImplementedException();
         }
     }

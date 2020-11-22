@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-using Dullahan;
+using Dullahan.ECS;
 
 public interface ITransformComponent : IComponent {
     public Vector3 position { get; set; }

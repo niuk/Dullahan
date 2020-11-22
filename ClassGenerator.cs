@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using UnityEngine;
 
 namespace Dullahan {
     public class ClassGenerator {
@@ -20,77 +19,98 @@ namespace Dullahan {
 using Dullahan;
 
 namespace {@namespace} {{
-    public class World : IWorld {{
-        public int tick {{ get; private set; }} = 0;
-
-        public void Tick() {{
-            ++tick;
-        }}
+    public class World {{
 ";
 
             var entityCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
-    public class Entity : IEntity {{
-        public IWorld world {{ get; private set; }}
+    public class Entity {{
+        public World world {{ get; private set; }}
+
+        private Entity entity => this;
+
         public Entity(World world) {{
             this.world = world;
         }}
 ";
 
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-                foreach (var type in assembly.GetTypes()) {
-                    if (typeof(IComponent).IsAssignableFrom(type) && type.IsInterface && type != typeof(IComponent)) {
-                        if (!type.Name.StartsWith("I") || !type.Name.EndsWith("Component")) {
-                            throw new Exception($"Invalid Component interface name {type.Name}: Must start with 'I' and end with \"Component\"!");
-                        }
+            foreach (var type in GetAllTypes()) {
+                if (typeof(ECS.IComponent).IsAssignableFrom(type) && type.IsInterface && type != typeof(ECS.IComponent)) {
+                    if (!type.Name.StartsWith("I") || !type.Name.EndsWith("Component")) {
+                        throw new Exception($"Invalid component interface name {type.Name}: Must start with 'I' and end with \"Component\"!");
+                    }
 
-                        var componentName = type.Name.Substring(1);
-                        logCallback($"Generating component class \"{componentName}\" from \"{type.FullName}\"...");
+                    var componentTypeName = type.Name.Substring(1);
+                    var componentPropertyName = componentTypeName[0].ToString().ToLower() + componentTypeName.Substring(1);
 
-                        GenerateStateProperty(type, componentName[0].ToString().ToLower() + componentName.Substring(1), ref entityCode, logCallback);
+                    logCallback($"Adding property \"{componentPropertyName}\" to Entity class...");
+                    GenerateStateProperty(type, componentPropertyName, ref entityCode, logCallback);
 
-                        var componentCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+                    logCallback($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
+                    var componentCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
-    public class {componentName} : {ToExpression(type)} {{
+    public class {componentTypeName} : {ToExpression(type)} {{
         public IEntity entity {{ get; private set; }}
 
-        public {componentName}(Entity entity) {{
+        public {componentTypeName}(Entity entity) {{
             this.entity = entity;
+            entity.{componentPropertyName} = this;
         }}
 ";
 
-                        var getters = new HashSet<string>();
-                        var setters = new HashSet<string>();
+                    var getters = new HashSet<string>();
+                    var setters = new HashSet<string>();
 
-                        foreach (var methodInfo in type.GetMethods()) {
-                            logCallback($"Method: {methodInfo.Name}");
-                            if (methodInfo.Name.StartsWith("get_") && !getters.Contains(methodInfo.Name)) {
-                                var propertyName = methodInfo.Name.Substring(4);
-                                getters.Add(propertyName);
-                                if (setters.Contains(propertyName)) {
-                                    GenerateStateProperty(methodInfo.ReturnType, propertyName, ref componentCode, logCallback);
-                                }
-                            }
-
-                            if (methodInfo.Name.StartsWith("set_") && !setters.Contains(methodInfo.Name)) {
-                                var propertyName = methodInfo.Name.Substring(4);
-                                setters.Add(propertyName);
-                                if (getters.Contains(propertyName)) {
-                                    GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, ref componentCode, logCallback);
-                                }
+                    foreach (var methodInfo in type.GetMethods()) {
+                        logCallback($"Method: {methodInfo.Name}");
+                        if (methodInfo.Name.StartsWith("get_") && !getters.Contains(methodInfo.Name)) {
+                            var propertyName = methodInfo.Name.Substring(4);
+                            getters.Add(propertyName);
+                            if (setters.Contains(propertyName)) {
+                                GenerateStateProperty(methodInfo.ReturnType, propertyName, ref componentCode, logCallback);
                             }
                         }
 
-                        componentCode += @"
+                        if (methodInfo.Name.StartsWith("set_") && !setters.Contains(methodInfo.Name)) {
+                            var propertyName = methodInfo.Name.Substring(4);
+                            setters.Add(propertyName);
+                            if (getters.Contains(propertyName)) {
+                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, ref componentCode, logCallback);
+                            }
+                        }
+                    }
+
+                    componentCode += @"
     }
 }
 ";
-                        File.WriteAllText(Path.Combine("Assets", outputDirectory, componentName + ".cs"), componentCode);
+                    File.WriteAllText(Path.Combine("Assets", outputDirectory, componentTypeName + ".cs"), componentCode);
+                }
+
+                if (typeof(ECS.System).IsAssignableFrom(type) && type.IsAbstract && type != typeof(ECS.System)) {
+                    if (!type.Name.StartsWith("I") || !type.Name.EndsWith("System")) {
+                        throw new Exception($"Invalid abstract system name {type.Name}: Must start with 'I' and end with \"System\"!");
                     }
+
+                    var systemTypeName = type.Name.Substring(1);
+                    var systemPropertyName = systemTypeName[0].ToString().ToLower() + systemTypeName.Substring(1);
+
+                    logCallback($"Adding property \"{systemPropertyName}\" to World class...");
+                    worldCode += $@"
+        private readonly {systemTypeName} {systemPropertyName} = new {systemTypeName}(this);
+";
+
+                    logCallback($"Generating system class \"{systemTypeName}\" from \"{type.FullName}\"...");
+                    var systemCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using Dullahan;
+
+namespace {@namespace} {{
+    public class {systemTypeName} : {ToExpression(type)} {{
+";
                 }
             }
 
@@ -112,15 +132,13 @@ namespace {@namespace} {{
         private static void GatherDiffers(Action<string> logCallback) {
             logCallback($"Gathering {typeof(IDiffer<,>)} implementations...");
 
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-                foreach (var type in assembly.GetTypes()) {
-                    var interfaces = type.GetInterfaces();
-                    foreach (var @interface in interfaces) {
-                        if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<,>)) {
-                            logCallback($"Found {@interface} implementation {type}.");
-                            var genericArguments = @interface.GetGenericArguments();
-                            differTypesAndDiffTypesByDiffableType[genericArguments[0]] = Tuple.Create(type, genericArguments[1]);
-                        }
+            foreach (var type in GetAllTypes()) {
+                var interfaces = type.GetInterfaces();
+                foreach (var @interface in interfaces) {
+                    if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<,>)) {
+                        logCallback($"Found {@interface} implementation {type}.");
+                        var genericArguments = @interface.GetGenericArguments();
+                        differTypesAndDiffTypesByDiffableType[genericArguments[0]] = Tuple.Create(type, genericArguments[1]);
                     }
                 }
             }
@@ -128,12 +146,22 @@ namespace {@namespace} {{
 
         private static void GenerateStateProperty(Type propertyType, string propertyName, ref string code, Action<string> logCallback) {
             logCallback($"Property: {propertyName}");
+
+            string differTypeName;
+            string diffTypeName;
             var propertyTypeName = ToExpression(propertyType);
             if (differTypesAndDiffTypesByDiffableType.TryGetValue(propertyType, out Tuple<Type, Type> differTypeAndDiffType)) {
-                var differTypeName = ToExpression(differTypeAndDiffType.Item1);
-                var diffTypeName = ToExpression(differTypeAndDiffType.Item2);
+                differTypeName = ToExpression(differTypeAndDiffType.Item1);
+                diffTypeName = ToExpression(differTypeAndDiffType.Item2);
+            } else if (propertyType.IsClass || propertyType.IsInterface) {
+                differTypeName = $"GenericClassObjectDiffer<{propertyTypeName}>";
+                diffTypeName = propertyTypeName;
+            } else {
+                var diffType = typeof(IDiffer<,>).GetGenericArguments()[1];
+                throw new InvalidProgramException($"No implementation of {typeof(IDiffer<,>).MakeGenericType(propertyType, diffType)} found!");
+            }
 
-                code += $@"
+            code += $@"
         private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
         private readonly Ring<{propertyTypeName}> {propertyName}_states = new Ring<{propertyTypeName}>();
         private readonly Ring<{diffTypeName}> {propertyName}_diffs = new Ring<{diffTypeName}>();
@@ -169,10 +197,10 @@ namespace {@namespace} {{
             }}
         }}
 ";
-            } else {
-                var diffType = typeof(IDiffer<,>).GetGenericArguments()[1];
-                throw new InvalidProgramException($"No implementation of {typeof(IDiffer<,>).MakeGenericType(propertyType, diffType)} found!");
-            }
+        }
+
+        private static IEnumerable<Type> GetAllTypes() {
+            return AppDomain.CurrentDomain.GetAssemblies().SelectMany(assembly => assembly.GetTypes());
         }
 
         private static string ToExpression(Type type) {

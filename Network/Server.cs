@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 
-namespace Dullahan {
-    public partial class Server {
+namespace Dullahan.Network {
+    public class Server {
         public Dictionary<Guid, Connection> connectionsById = new Dictionary<Guid, Connection>();
 
         public void PropagateState() {
