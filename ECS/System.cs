@@ -2,12 +2,10 @@
 
 namespace Dullahan.ECS {
     public abstract class System {
-        public IEnumerable<System> dependencies { get; private set; }
-        public ICollection<System> dependants { get; private set; }
+        public IEnumerable<System> dependencies { get; protected set; }
+        public ICollection<System> dependants { get; protected set; }
 
-        public int tick { get; private set; }
-        public void Tick() {
-            // TODO
-        }
+        public int tick { get; protected set; } = 0;
+        public abstract void Tick();
     }
 }
