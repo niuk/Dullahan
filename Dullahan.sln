@@ -3,7 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.30717.126
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dullahan", "Dullahan\Dullahan.csproj", "{6BA59B0E-B45F-4344-B3C3-06BA0CC92CED}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Dullahan", "Dullahan\Dullahan.csproj", "{6BA59B0E-B45F-4344-B3C3-06BA0CC92CED}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeGenerator", "CodeGenerator\CodeGenerator.csproj", "{905E8C21-C86F-45F0-A8A4-4BD846E94272}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnityAdapter", "UnityAdapter\UnityAdapter.csproj", "{F65E2088-1BC7-4619-9C24-756D01616B4C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +19,14 @@ Global
 		{6BA59B0E-B45F-4344-B3C3-06BA0CC92CED}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6BA59B0E-B45F-4344-B3C3-06BA0CC92CED}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6BA59B0E-B45F-4344-B3C3-06BA0CC92CED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{905E8C21-C86F-45F0-A8A4-4BD846E94272}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{905E8C21-C86F-45F0-A8A4-4BD846E94272}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{905E8C21-C86F-45F0-A8A4-4BD846E94272}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{905E8C21-C86F-45F0-A8A4-4BD846E94272}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F65E2088-1BC7-4619-9C24-756D01616B4C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F65E2088-1BC7-4619-9C24-756D01616B4C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F65E2088-1BC7-4619-9C24-756D01616B4C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F65E2088-1BC7-4619-9C24-756D01616B4C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

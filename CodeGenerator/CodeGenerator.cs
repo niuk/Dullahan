@@ -5,24 +5,33 @@ using System.Linq;
 using System.Reflection;
 
 namespace Dullahan {
-    public class ClassGenerator {
-        public static void DeleteGeneratedClasses(string outputDirectory, Action<string> logCallback) {
+    public class CodeGenerator {
+        public static void Main(string[] args) {
+            switch (args[1]) {
+                case "generate":
+                    GenerateClasses(args[2], args[3]);
+                    break;
+                case "clean":
+                    DeleteGeneratedClasses(args[2]);
+                    break;
+                default:
+                    throw new ArgumentException($"Unrecognized command \"{args[1]}\": must be \"generate\" or \"clean\".");
+            }
+        }
+
+        public static void DeleteGeneratedClasses(string outputDirectory) {
             foreach (var file in Directory.GetFiles(outputDirectory)) {
-                logCallback($"Deleting \"{file}\"...");
+                Console.WriteLine($"Deleting \"{file}\"...");
                 File.Delete(file);
             }
         }
 
-        private static string Decapitalize(string s) {
-            return s[0].ToString().ToLower() + s.Substring(1);
-        }
-
-        public static void GenerateClasses(string outputDirectory, string @namespace, Action<string> logCallback) {
+        public static void GenerateClasses(string outputDirectory, string @namespace) {
             // differ types need to be known for the generation of component property accessors below
-            GatherDiffers(logCallback);
+            GatherDiffers();
 
             // World.cs
-            var worldCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+            var worldCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
@@ -31,7 +40,7 @@ namespace {@namespace} {{
 ";
 
             // Entity.cs
-            var entityCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+            var entityCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
@@ -56,13 +65,13 @@ namespace {@namespace} {{
                     var systemTypeName = type.Name + "_Implementation";
                     var systemPropertyName = Decapitalize(type.Name);
 
-                    logCallback($"Adding property \"{systemPropertyName}\" to World class...");
+                    Console.WriteLine($"Adding property \"{systemPropertyName}\" to World class...");
                     worldCode += $@"
         public readonly {type.FullName} {systemPropertyName} = new {systemTypeName}();
 ";
 
-                    logCallback($"Generating system class \"{systemTypeName}\" from \"{type.FullName}\"...");
-                    var systemCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+                    Console.WriteLine($"Generating system class \"{systemTypeName}\" from \"{type.FullName}\"...");
+                    var systemCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -83,7 +92,7 @@ namespace {@namespace} {{
                             var propertyName = method.Name.Substring(4);
                             var enumerableType = method.ReturnType;
                             if (enumerableType.IsGenericType && enumerableType.GetGenericTypeDefinition() == typeof(IEnumerable<>)) {
-                                logCallback($"Generating accessor {propertyName} with type {enumerableType}...");
+                                Console.WriteLine($"Generating accessor {propertyName} with type {enumerableType}...");
                                 var genericArgument = enumerableType.GetGenericArguments()[0];
                                 if (genericArgument.IsGenericType && genericArgument.GetGenericTypeDefinition().Name.Split('`')[0] == "Tuple") {
                                     // store the entities directly into the collection
@@ -156,11 +165,11 @@ namespace {@namespace} {{
                     var componentTypeName = type.Name.Substring(1);
                     var componentPropertyName = Decapitalize(componentTypeName);
 
-                    logCallback($"Adding property \"{componentPropertyName}\" to Entity class...");
-                    GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode, logCallback);
+                    Console.WriteLine($"Adding property \"{componentPropertyName}\" to Entity class...");
+                    GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode);
 
-                    logCallback($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
-                    var componentCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+                    Console.WriteLine($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
+                    var componentCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
@@ -177,12 +186,12 @@ namespace {@namespace} {{
                     var setters = new HashSet<string>();
 
                     foreach (var methodInfo in type.GetMethods()) {
-                        logCallback($"Method: {methodInfo.Name}");
+                        Console.WriteLine($"Method: {methodInfo.Name}");
                         if (methodInfo.Name.StartsWith("get_") && !getters.Contains(methodInfo.Name)) {
                             var propertyName = methodInfo.Name.Substring(4);
                             getters.Add(propertyName);
                             if (setters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.ReturnType, propertyName, Enumerable.Empty<string>(), ref componentCode, logCallback);
+                                GenerateStateProperty(methodInfo.ReturnType, propertyName, Enumerable.Empty<string>(), ref componentCode);
                             }
                         }
 
@@ -190,7 +199,7 @@ namespace {@namespace} {{
                             var propertyName = methodInfo.Name.Substring(4);
                             setters.Add(propertyName);
                             if (getters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, Enumerable.Empty<string>(), ref componentCode, logCallback);
+                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, Enumerable.Empty<string>(), ref componentCode);
                             }
                         }
                     }
@@ -218,14 +227,14 @@ namespace {@namespace} {{
 
         private static readonly Dictionary<Type, Tuple<Type, Type>> differTypesAndDiffTypesByDiffableType = new Dictionary<Type, Tuple<Type, Type>>();
 
-        private static void GatherDiffers(Action<string> logCallback) {
-            logCallback($"Gathering {typeof(IDiffer<,>)} implementations...");
+        private static void GatherDiffers() {
+            Console.WriteLine($"Gathering {typeof(IDiffer<,>)} implementations...");
 
             foreach (var type in GetAllTypes()) {
                 var interfaces = type.GetInterfaces();
                 foreach (var @interface in interfaces) {
                     if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<,>)) {
-                        logCallback($"Found {@interface} implementation {type}.");
+                        Console.WriteLine($"Found {@interface} implementation {type}.");
                         var genericArguments = @interface.GetGenericArguments();
                         differTypesAndDiffTypesByDiffableType[genericArguments[0]] = Tuple.Create(type, genericArguments[1]);
                     }
@@ -233,8 +242,8 @@ namespace {@namespace} {{
             }
         }
 
-        private static void GenerateStateProperty(Type propertyType, string propertyName, IEnumerable<string> onSet, ref string code, Action<string> logCallback) {
-            logCallback($"Property: {propertyName}");
+        private static void GenerateStateProperty(Type propertyType, string propertyName, IEnumerable<string> onSet, ref string code) {
+            Console.WriteLine($"Property: {propertyName}");
 
             string differTypeName;
             string diffTypeName;
@@ -298,6 +307,10 @@ namespace {@namespace} {{
             } else {
                 return type.FullName;
             }
+        }
+
+        private static string Decapitalize(string s) {
+            return s[0].ToString().ToLower() + s.Substring(1);
         }
     }
 }
