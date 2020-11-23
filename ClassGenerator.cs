@@ -27,6 +27,7 @@ using Dullahan;
 
 namespace {@namespace} {{
     public class World {{
+        public int tick {{ get; private set; }}
 ";
 
             // Entity.cs
@@ -45,19 +46,19 @@ namespace {@namespace} {{
 ";
 
             // generate system classes first so that we know which systems need to add/remove component tuples when components are added to/removed from entities
-            var systemFieldsWithComponentType = new Dictionary<Type, Tuple<Type, string>>();
+            var systemModificationsForComponentType = new Dictionary<Type, HashSet<string>>();
             foreach (var type in GetAllTypes()) {
-                if (typeof(ECS.System).IsAssignableFrom(type) && type.IsAbstract && type != typeof(ECS.System)) {
+                if (typeof(ECS.ISystem).IsAssignableFrom(type) && type.IsAbstract && type != typeof(ECS.ISystem)) {
                     if (!type.Name.EndsWith("System")) {
                         throw new Exception($"Invalid abstract system name {type.Name}: Must end with \"System\"!");
                     }
 
-                    var systemTypeName = type.Name + "Implementation";
+                    var systemTypeName = type.Name + "_Implementation";
                     var systemPropertyName = Decapitalize(type.Name);
 
                     logCallback($"Adding property \"{systemPropertyName}\" to World class...");
                     worldCode += $@"
-        private readonly {type.Name} {systemPropertyName} = new {systemTypeName}();
+        public readonly {type.FullName} {systemPropertyName} = new {systemTypeName}();
 ";
 
                     logCallback($"Generating system class \"{systemTypeName}\" from \"{type.FullName}\"...");
@@ -67,7 +68,14 @@ using System.Collections.Generic;
 using System.Linq;
 
 namespace {@namespace} {{
-    public class {systemTypeName} : {type.Name} {{
+    public class {systemTypeName} : {type.FullName} {{
+        private int _tick = 0;
+        public override int tick => _tick;
+
+        public override void Tick() {{
+            ++_tick;
+            base.Tick();
+        }}
 ";
 
                     foreach (var method in type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)) {
@@ -83,18 +91,48 @@ namespace {@namespace} {{
                                     systemCode += $@"
         public readonly HashSet<Entity> {propertyName}_collection = new HashSet<Entity>();
         protected override IEnumerable<Tuple<{
-                                        string.Join(", ", componentTypes.Select(componentType => componentType.Name))
+                                        string.Join(", ", componentTypes.Select(componentType => componentType.FullName))
                                         }>> {propertyName} => {propertyName}_collection.Select(entity => Tuple.Create({
                                         string.Join(", ", componentTypes.Select(componentType => "entity." + Decapitalize(componentType.Name.Substring(1))))
                                         }));
 ";
+
+                                    foreach (var componentType in componentTypes) {
+                                        var modification = $@"
+                if (value != null) {{
+                    if ({string.Join(" && ", componentTypes.Where(ct => ct != componentType).Select(ct => $"entity.{Decapitalize(ct.Name.Substring(1))} != null"))}) {{
+                        (({systemTypeName})entity.world.{systemPropertyName}).{propertyName}_collection.Add(entity);
+                    }}
+                }} else {{
+                    (({systemTypeName})entity.world.{systemPropertyName}).{propertyName}_collection.Remove(entity);
+                }}
+";
+                                        if (systemModificationsForComponentType.TryGetValue(componentType, out HashSet<string> modifications)) {
+                                            modifications.Add(modification);
+                                        } else {
+                                            systemModificationsForComponentType.Add(componentType, new HashSet<string> { modification });
+                                        }
+                                    }
                                 } else {
                                     // store just the components
-                                    var componentTypeName = genericArgument.Name;
+                                    var componentTypeName = genericArgument.FullName;
                                     systemCode += $@"
         public readonly HashSet<{componentTypeName}> {propertyName}_collection = new HashSet<{componentTypeName}>();
         protected override IEnumerable<{componentTypeName}> {propertyName} => {propertyName}_collection;
 ";
+
+                                    var modification = $@"
+                if (value != null) {{
+                    (({systemTypeName})entity.world.{systemPropertyName}).{propertyName}_collection.Add(value);
+                }} else {{
+                    (({systemTypeName})entity.world.{systemPropertyName}).{propertyName}_collection.Remove({Decapitalize(genericArgument.Name.Substring(1))});
+                }}
+";
+                                    if (systemModificationsForComponentType.TryGetValue(genericArgument, out HashSet<string> modifications)) {
+                                        modifications.Add(modification);
+                                    } else {
+                                        systemModificationsForComponentType.Add(genericArgument, new HashSet<string> { modification });
+                                    }
                                 }
                             }
                         }
@@ -119,14 +157,14 @@ namespace {@namespace} {{
                     var componentPropertyName = Decapitalize(componentTypeName);
 
                     logCallback($"Adding property \"{componentPropertyName}\" to Entity class...");
-                    GenerateStateProperty(type, componentPropertyName, ref entityCode, logCallback);
+                    GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode, logCallback);
 
                     logCallback($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
                     var componentCode = @$"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
 
 namespace {@namespace} {{
-    public class {componentTypeName} : {type.Name} {{
+    public class {componentTypeName} : {type.FullName} {{
         public Entity entity {{ get; private set; }}
 
         public {componentTypeName}(Entity entity) {{
@@ -144,7 +182,7 @@ namespace {@namespace} {{
                             var propertyName = methodInfo.Name.Substring(4);
                             getters.Add(propertyName);
                             if (setters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.ReturnType, propertyName, ref componentCode, logCallback);
+                                GenerateStateProperty(methodInfo.ReturnType, propertyName, Enumerable.Empty<string>(), ref componentCode, logCallback);
                             }
                         }
 
@@ -152,7 +190,7 @@ namespace {@namespace} {{
                             var propertyName = methodInfo.Name.Substring(4);
                             setters.Add(propertyName);
                             if (getters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, ref componentCode, logCallback);
+                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, Enumerable.Empty<string>(), ref componentCode, logCallback);
                             }
                         }
                     }
@@ -195,7 +233,7 @@ namespace {@namespace} {{
             }
         }
 
-        private static void GenerateStateProperty(Type propertyType, string propertyName, ref string code, Action<string> logCallback) {
+        private static void GenerateStateProperty(Type propertyType, string propertyName, IEnumerable<string> onSet, ref string code, Action<string> logCallback) {
             logCallback($"Property: {propertyName}");
 
             string differTypeName;
@@ -215,13 +253,13 @@ namespace {@namespace} {{
             code += $@"
         private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
         private readonly Ring<{propertyTypeName}> {propertyName}_states = new Ring<{propertyTypeName}>();
-        private readonly Ring<{diffTypeName}> {propertyName}_diffs = new Ring<{diffTypeName}>();
+        private readonly Ring<Maybe<{diffTypeName}>> {propertyName}_diffs = new Ring<Maybe<{diffTypeName}>>();
         public {propertyTypeName} {propertyName} {{
             get {{
                 return {propertyName}_states.PeekEnd();
             }}
 
-            set {{
+            set {{{string.Join("\r\n", onSet)}
                 if ({propertyName}_ticks.Count > 0 && {propertyName}_ticks.PeekEnd() == entity.world.tick) {{
                     {propertyName}_states.PopEnd();
                     {propertyName}_ticks.PopEnd();
@@ -231,9 +269,9 @@ namespace {@namespace} {{
                 for (int i = 0; i < {propertyName}_states.Count; ++i) {{
                     int index = {propertyName}_states.Start + i;
                     if (differ.Diff({propertyName}_states[index], value, out {diffTypeName} diff)) {{
-                        {propertyName}_diffs[index] = diff;
+                        {propertyName}_diffs[index] = new Maybe<{diffTypeName}>.Just(diff);
                     }} else {{
-                        {propertyName}_diffs[index] = null;
+                        {propertyName}_diffs[index] = new Maybe<{diffTypeName}>.Nothing();
                     }}
                 }}
 
