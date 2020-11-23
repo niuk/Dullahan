@@ -1,5 +1,5 @@
 ﻿namespace Dullahan {
-    public class GenericClassObjectDiffer<T> : IDiffer<T, T> where T : class {
+    public class ReferenceDiffer<T> : IDiffer<T, T> where T : class {
         public bool Diff(T left, T right, out T diff) {
             diff = right;
             return !ReferenceEquals(left, right);

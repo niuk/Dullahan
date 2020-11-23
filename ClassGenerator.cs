@@ -205,7 +205,7 @@ namespace {@namespace} {{
                 differTypeName = ToExpression(differTypeAndDiffType.Item1);
                 diffTypeName = ToExpression(differTypeAndDiffType.Item2);
             } else if (propertyType.IsClass || propertyType.IsInterface) {
-                differTypeName = $"GenericClassObjectDiffer<{propertyTypeName}>";
+                differTypeName = $"ReferenceDiffer<{propertyTypeName}>";
                 diffTypeName = propertyTypeName;
             } else {
                 var diffType = typeof(IDiffer<,>).GetGenericArguments()[1];
