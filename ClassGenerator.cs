@@ -57,7 +57,7 @@ namespace {@namespace} {{
 
                     logCallback($"Adding property \"{systemPropertyName}\" to World class...");
                     worldCode += $@"
-        private readonly {ToExpression(type)} {systemPropertyName} = new {systemTypeName}();
+        private readonly {type.Name} {systemPropertyName} = new {systemTypeName}();
 ";
 
                     logCallback($"Generating system class \"{systemTypeName}\" from \"{type.FullName}\"...");
@@ -67,7 +67,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 namespace {@namespace} {{
-    public class {systemTypeName} : {ToExpression(type)} {{
+    public class {systemTypeName} : {type.Name} {{
 ";
 
                     foreach (var method in type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)) {
@@ -83,17 +83,17 @@ namespace {@namespace} {{
                                     systemCode += $@"
         public readonly HashSet<Entity> {propertyName}_collection = new HashSet<Entity>();
         protected override IEnumerable<Tuple<{
-                                        string.Join(", ", componentTypes.Select(ToExpression))
+                                        string.Join(", ", componentTypes.Select(componentType => componentType.Name))
                                         }>> {propertyName} => {propertyName}_collection.Select(entity => Tuple.Create({
                                         string.Join(", ", componentTypes.Select(componentType => "entity." + Decapitalize(componentType.Name.Substring(1))))
                                         }));
 ";
                                 } else {
                                     // store just the components
-                                    var componentTypeExpression = ToExpression(genericArgument);
+                                    var componentTypeName = genericArgument.Name;
                                     systemCode += $@"
-        public readonly HashSet<{componentTypeExpression}> {propertyName}_collection = new HashSet<{componentTypeExpression}>();
-        protected override IEnumerable<{componentTypeExpression}> {propertyName} => {propertyName}_collection;
+        public readonly HashSet<{componentTypeName}> {propertyName}_collection = new HashSet<{componentTypeName}>();
+        protected override IEnumerable<{componentTypeName}> {propertyName} => {propertyName}_collection;
 ";
                                 }
                             }
@@ -126,7 +126,7 @@ namespace {@namespace} {{
 using Dullahan;
 
 namespace {@namespace} {{
-    public class {componentTypeName} : {ToExpression(type)} {{
+    public class {componentTypeName} : {type.Name} {{
         public Entity entity {{ get; private set; }}
 
         public {componentTypeName}(Entity entity) {{
