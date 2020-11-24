@@ -4,29 +4,110 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+
 namespace Dullahan {
-    public class CodeGenerator {
-        public static void Main(string[] args) {
-            switch (args[1]) {
-                case "generate":
-                    GenerateClasses(args[2], args[3]);
-                    break;
-                case "clean":
-                    DeleteGeneratedClasses(args[2]);
-                    break;
-                default:
-                    throw new ArgumentException($"Unrecognized command \"{args[1]}\": must be \"generate\" or \"clean\".");
+    public class CodeGen {
+        private static readonly Dictionary<Type, Tuple<Type, Type>> differTypesAndDiffTypesByDiffableType = new Dictionary<Type, Tuple<Type, Type>>();
+        private static readonly Dictionary<string, Assembly> assembliesByFullName = new Dictionary<string, Assembly>();
+
+        private static IEnumerable<string> GetFilesRecursive(string directory, string pattern) {
+            return Directory.GetFiles(directory, pattern).Concat(Directory.GetDirectories(directory).SelectMany(subDirectory => GetFilesRecursive(subDirectory, pattern)));
+        }
+
+        private static void AddAssemblyWithReferencedAssemblies(Assembly assembly) {
+            if (!assembliesByFullName.ContainsKey(assembly.FullName)) {
+                assembliesByFullName.Add(assembly.FullName, assembly);
+                //Console.WriteLine($"Added assembly \"{assembly.FullName}\"");
+                foreach (var referencedAssemblyName in assembly.GetReferencedAssemblies()) {
+                    try {
+                        AddAssemblyWithReferencedAssemblies(Assembly.Load(referencedAssemblyName));
+                    } catch (FileNotFoundException e) {
+                        Console.Error.WriteLine(e);
+                    }
+                }
             }
         }
 
-        public static void DeleteGeneratedClasses(string outputDirectory) {
+        private static void AddAssemblyFromFile(string filePath) {
+            AddAssemblyWithReferencedAssemblies(Assembly.LoadFile(filePath));
+        }
+
+        private static void CompileFilesInDirectory(string directory) {
+            var syntaxTrees = GetFilesRecursive(directory, "*.cs").Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file)).WithFilePath(file));
+            foreach (var syntaxTree in syntaxTrees) {
+                //Console.WriteLine($"{syntaxTree.FilePath}:\n{syntaxTree.ToString()}\n");
+            }
+
+            var references = assembliesByFullName.Values.Where(assembly => !string.IsNullOrEmpty(assembly.Location)).Select(assembly => MetadataReference.CreateFromFile(assembly.Location));
+            references = references.Concat(new[] { MetadataReference.CreateFromFile(typeof(object).GetTypeInfo().Assembly.Location) });
+            foreach (var reference in references) {
+                //Console.WriteLine(reference.Display);
+            }
+
+            var compilation = CSharpCompilation.Create(Path.GetRandomFileName(), syntaxTrees, references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            using (var memoryStream = new MemoryStream()) {
+                var emitResult = compilation.Emit(memoryStream);
+                if (emitResult.Success) {
+                    Console.WriteLine($"Compiled sources in \"{directory}\"");
+                    var assembly = Assembly.Load(memoryStream.ToArray());
+                    assembliesByFullName.Add(assembly.FullName, assembly);
+                    Console.WriteLine($"Added compiled assembly \"{assembly.FullName}\"");
+                } else {
+                    foreach (var diagnostic in emitResult.Diagnostics) {
+                        Console.Error.WriteLine(diagnostic);
+                    }
+
+                    throw new InvalidProgramException($"Could not compile sources in {directory}!");
+                }
+            }
+        }
+
+        public static void Main(string[] args) {
+            if (args.Length == 0) {
+                args = new string[] { "help" };
+            }
+
+            switch (args[0]) {
+                case "generate":
+                    AddAssemblyWithReferencedAssemblies(Assembly.GetExecutingAssembly());
+
+                    for (int i = 4; i < args.Length; ++i) {
+                        Console.WriteLine($"Referenced assembly: {args[i]}");
+                        AddAssemblyFromFile(args[i]);
+                    }
+
+                    Console.WriteLine($"Source directory: {args[3]}");
+                    CompileFilesInDirectory(args[3]);
+
+                    Console.WriteLine($"Namespace: {args[1]}\nOutput directory: {args[2]}");
+                    Generate(args[1], args[2]);
+
+                    break;
+                case "clean":
+                    Clean(args[1]);
+                    break;
+                case "help":
+                    Console.Write($@"Usage:
+    {AppDomain.CurrentDomain.FriendlyName} help
+    {AppDomain.CurrentDomain.FriendlyName} generate <namespace> <output directory> <sources> <reference assemblies>
+    {AppDomain.CurrentDomain.FriendlyName} clean <source project path>
+");
+                    break;
+                default:
+                    throw new ArgumentException($"Unrecognized command \"{args[0]}\": must be \"help\", \"generate\" or \"clean\".");
+            }
+        }
+
+        public static void Clean(string outputDirectory) {
             foreach (var file in Directory.GetFiles(outputDirectory)) {
                 Console.WriteLine($"Deleting \"{file}\"...");
                 File.Delete(file);
             }
         }
 
-        public static void GenerateClasses(string outputDirectory, string @namespace) {
+        public static void Generate(string @namespace, string outputPath) {
             // differ types need to be known for the generation of component property accessors below
             GatherDiffers();
 
@@ -151,7 +232,7 @@ namespace {@namespace} {{
     }
 }
 ";
-                    File.WriteAllText(Path.Combine(outputDirectory, systemTypeName + ".cs"), systemCode);
+                    File.WriteAllText(Path.Combine(outputPath, systemTypeName + ".cs"), systemCode);
                 }
             }
 
@@ -208,7 +289,7 @@ namespace {@namespace} {{
     }
 }
 ";
-                    File.WriteAllText(Path.Combine(outputDirectory, componentTypeName + ".cs"), componentCode);
+                    File.WriteAllText(Path.Combine(outputPath, componentTypeName + ".cs"), componentCode);
                 }
             }
 
@@ -216,16 +297,14 @@ namespace {@namespace} {{
     }
 }
 ";
-            File.WriteAllText(Path.Combine(outputDirectory, "Entity.cs"), entityCode);
+            File.WriteAllText(Path.Combine(outputPath, "Entity.cs"), entityCode);
 
             worldCode += @"
     }
 }
 ";
-            File.WriteAllText(Path.Combine(outputDirectory, "World.cs"), worldCode);
+            File.WriteAllText(Path.Combine(outputPath, "World.cs"), worldCode);
         }
-
-        private static readonly Dictionary<Type, Tuple<Type, Type>> differTypesAndDiffTypesByDiffableType = new Dictionary<Type, Tuple<Type, Type>>();
 
         private static void GatherDiffers() {
             Console.WriteLine($"Gathering {typeof(IDiffer<,>)} implementations...");
@@ -298,7 +377,15 @@ namespace {@namespace} {{
         }
 
         private static IEnumerable<Type> GetAllTypes() {
-            return AppDomain.CurrentDomain.GetAssemblies().SelectMany(assembly => assembly.GetTypes());
+            return assembliesByFullName.Values.SelectMany(assembly => {
+                try {
+                    return assembly.GetTypes();
+                } catch (Exception e) {
+                    Console.Error.WriteLine(e);
+                    return new Type[] { };
+                }
+            });
+
         }
 
         private static string ToExpression(Type type) {

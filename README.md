@@ -1,2 +1,3 @@
 # Dullahan
-ECS for networked video games
+
+An ECS and synchronization framework for realtime multiplayer video games.
