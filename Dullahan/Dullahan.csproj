@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\bc-csharp\crypto\BouncyCastle.csproj" />
+    <PackageReference Include="Portable.BouncyCastle" Version="1.8.8" />
   </ItemGroup>
 
 </Project>
