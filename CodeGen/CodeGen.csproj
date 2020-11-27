@@ -1,9 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
     <OutputType>Exe</OutputType>
-    <StartupObject>Dullahan.CodeGen</StartupObject>
+    <TargetFramework>net5.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,12 +11,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Dullahan\Dullahan.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="CodeGenerator.runtimeconfig.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
 </Project>

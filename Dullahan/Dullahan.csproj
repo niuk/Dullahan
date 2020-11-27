@@ -5,4 +5,8 @@
     <OutputType>Library</OutputType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\bc-csharp\crypto\BouncyCastle.csproj" />
+  </ItemGroup>
+
 </Project>

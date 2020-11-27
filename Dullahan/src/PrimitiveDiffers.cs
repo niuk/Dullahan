@@ -1,22 +1,11 @@
 ﻿namespace Dullahan {
-    public class SingleDiffer : IDiffer<float, float> {
-        public bool Diff(float left, float right, out float diff) {
+    public class PrimitiveDiffer<T> : IDiffer<T, T> where T : struct {
+        public bool Diff(T left, T right, out T diff) {
             diff = right;
-            return left == right;
+            return Equals(left, right);
         }
 
-        public void Patch(ref float diffable, float diff) {
-            diffable = diff;
-        }
-    }
-
-    public class BoolDiffer : IDiffer<bool, bool> {
-        public bool Diff(bool left, bool right, out bool diff) {
-            diff = right;
-            return left != right;
-        }
-
-        public void Patch(ref bool diffable, bool diff) {
+        public void Patch(ref T diffable, T diff) {
             diffable = diff;
         }
     }

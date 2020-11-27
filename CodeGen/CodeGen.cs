@@ -12,58 +12,6 @@ namespace Dullahan {
         private static readonly Dictionary<Type, Tuple<Type, Type>> differTypesAndDiffTypesByDiffableType = new Dictionary<Type, Tuple<Type, Type>>();
         private static readonly Dictionary<string, Assembly> assembliesByFullName = new Dictionary<string, Assembly>();
 
-        private static IEnumerable<string> GetFilesRecursive(string directory, string pattern) {
-            return Directory.GetFiles(directory, pattern).Concat(Directory.GetDirectories(directory).SelectMany(subDirectory => GetFilesRecursive(subDirectory, pattern)));
-        }
-
-        private static void AddAssemblyWithReferencedAssemblies(Assembly assembly) {
-            if (!assembliesByFullName.ContainsKey(assembly.FullName)) {
-                assembliesByFullName.Add(assembly.FullName, assembly);
-                //Console.WriteLine($"Added assembly \"{assembly.FullName}\"");
-                foreach (var referencedAssemblyName in assembly.GetReferencedAssemblies()) {
-                    try {
-                        AddAssemblyWithReferencedAssemblies(Assembly.Load(referencedAssemblyName));
-                    } catch (FileNotFoundException e) {
-                        Console.Error.WriteLine(e);
-                    }
-                }
-            }
-        }
-
-        private static void AddAssemblyFromFile(string filePath) {
-            AddAssemblyWithReferencedAssemblies(Assembly.LoadFile(filePath));
-        }
-
-        private static void CompileFilesInDirectory(string directory) {
-            var syntaxTrees = GetFilesRecursive(directory, "*.cs").Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file)).WithFilePath(file));
-            foreach (var syntaxTree in syntaxTrees) {
-                //Console.WriteLine($"{syntaxTree.FilePath}:\n{syntaxTree.ToString()}\n");
-            }
-
-            var references = assembliesByFullName.Values.Where(assembly => !string.IsNullOrEmpty(assembly.Location)).Select(assembly => MetadataReference.CreateFromFile(assembly.Location));
-            references = references.Concat(new[] { MetadataReference.CreateFromFile(typeof(object).GetTypeInfo().Assembly.Location) });
-            foreach (var reference in references) {
-                //Console.WriteLine(reference.Display);
-            }
-
-            var compilation = CSharpCompilation.Create(Path.GetRandomFileName(), syntaxTrees, references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-            using (var memoryStream = new MemoryStream()) {
-                var emitResult = compilation.Emit(memoryStream);
-                if (emitResult.Success) {
-                    Console.WriteLine($"Compiled sources in \"{directory}\"");
-                    var assembly = Assembly.Load(memoryStream.ToArray());
-                    assembliesByFullName.Add(assembly.FullName, assembly);
-                    Console.WriteLine($"Added compiled assembly \"{assembly.FullName}\"");
-                } else {
-                    foreach (var diagnostic in emitResult.Diagnostics) {
-                        Console.Error.WriteLine(diagnostic);
-                    }
-
-                    throw new InvalidProgramException($"Could not compile sources in {directory}!");
-                }
-            }
-        }
-
         public static void Main(string[] args) {
             if (args.Length == 0) {
                 args = new string[] { "help" };
@@ -71,15 +19,13 @@ namespace Dullahan {
 
             switch (args[0]) {
                 case "generate":
-                    AddAssemblyWithReferencedAssemblies(Assembly.GetExecutingAssembly());
+                    LoadAssemblyWithReferencedAssemblies(Assembly.GetExecutingAssembly());
 
-                    for (int i = 4; i < args.Length; ++i) {
-                        Console.WriteLine($"Referenced assembly: {args[i]}");
-                        AddAssemblyFromFile(args[i]);
+                    for (int i = 3; i < args.Length; ++i) {
+                        Console.WriteLine($"Source: {args[i]}");
+                        LoadAssembliesFromDirectory(args[i]);
+                        CompileFilesFromDirectory(args[i]);
                     }
-
-                    Console.WriteLine($"Source directory: {args[3]}");
-                    CompileFilesInDirectory(args[3]);
 
                     Console.WriteLine($"Namespace: {args[1]}\nOutput directory: {args[2]}");
                     Generate(args[1], args[2]);
@@ -96,7 +42,56 @@ namespace Dullahan {
 ");
                     break;
                 default:
-                    throw new ArgumentException($"Unrecognized command \"{args[0]}\": must be \"help\", \"generate\" or \"clean\".");
+                    throw new ArgumentException($"Unrecognized command \"{args[0]}\": must be \"help\", \"generate\" or \"clean\"");
+            }
+        }
+
+        private static IEnumerable<string> GetFilesRecursive(string directory, string pattern) {
+            return Directory.GetFiles(directory, pattern).Concat(Directory.GetDirectories(directory).SelectMany(subDirectory => GetFilesRecursive(subDirectory, pattern)));
+        }
+
+        private static void LoadAssemblyWithReferencedAssemblies(Assembly assembly) {
+            if (!assembliesByFullName.ContainsKey(assembly.FullName)) {
+                assembliesByFullName.Add(assembly.FullName, assembly);
+                foreach (var referencedAssemblyName in assembly.GetReferencedAssemblies()) {
+                    try {
+                        Console.WriteLine($"Loading assembly by name: {referencedAssemblyName.FullName}");
+                        LoadAssemblyWithReferencedAssemblies(Assembly.Load(referencedAssemblyName));
+                    } catch (FileNotFoundException e) {
+                        Console.Error.WriteLine(e);
+                    }
+                }
+            }
+        }
+
+        private static void LoadAssembliesFromDirectory(string directory) {
+            foreach (var file in GetFilesRecursive(directory, "*.dll")) {
+                Console.WriteLine($"Loading assembly from file: {file}");
+                LoadAssemblyWithReferencedAssemblies(Assembly.LoadFrom(file));
+            }
+        }
+
+        private static void CompileFilesFromDirectory(string directory) {
+            var syntaxTrees = GetFilesRecursive(directory, "*.cs").Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file)).WithFilePath(file));
+            foreach (var syntaxTree in syntaxTrees) {
+                Console.WriteLine($"{syntaxTree.FilePath}:\n{syntaxTree}\n");
+            }
+
+            var references = assembliesByFullName.Values.Where(assembly => !string.IsNullOrEmpty(assembly.Location)).Select(assembly => MetadataReference.CreateFromFile(assembly.Location));
+            var compilation = CSharpCompilation.Create(Path.GetRandomFileName(), syntaxTrees, references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            using (var memoryStream = new MemoryStream()) {
+                var emitResult = compilation.Emit(memoryStream);
+                if (emitResult.Success) {
+                    var assembly = Assembly.Load(memoryStream.ToArray());
+                    Console.WriteLine($"Loading compiled assembly: {assembly.FullName}");
+                    assembliesByFullName.Add(assembly.FullName, assembly);
+                } else {
+                    foreach (var diagnostic in emitResult.Diagnostics) {
+                        Console.Error.WriteLine(diagnostic);
+                    }
+
+                    throw new InvalidProgramException($"Could not compile sources in directory \"{directory}\"");
+                }
             }
         }
 
@@ -142,6 +137,8 @@ namespace {@namespace} {{
                     if (!type.Name.EndsWith("System")) {
                         throw new Exception($"Invalid abstract system name {type.Name}: Must end with \"System\"!");
                     }
+
+                    Console.WriteLine($"Found {typeof(ECS.ISystem)} implementation {type}");
 
                     var systemTypeName = type.Name + "_Implementation";
                     var systemPropertyName = Decapitalize(type.Name);
@@ -238,10 +235,16 @@ namespace {@namespace} {{
 
             // generate component classes that automatically add themselves to the tuple containers of relevant systems and that keep track of state diffs
             foreach (var type in GetAllTypes()) {
+                if (type.Name.Contains("Component")) {
+                    Console.WriteLine($"{type}: is assignable = {typeof(ECS.IComponent).IsAssignableFrom(type)}, is interface = {type.IsInterface}, isn't IComponent = {type != typeof(ECS.IComponent)}");
+                }
+
                 if (typeof(ECS.IComponent).IsAssignableFrom(type) && type.IsInterface && type != typeof(ECS.IComponent)) {
                     if (!type.Name.StartsWith("I") || !type.Name.EndsWith("Component")) {
                         throw new Exception($"Invalid component interface name {type.Name}: Must start with 'I' and end with \"Component\"!");
                     }
+
+                    Console.WriteLine($"Found {typeof(ECS.IComponent)} implementation {type}");
 
                     var componentTypeName = type.Name.Substring(1);
                     var componentPropertyName = Decapitalize(componentTypeName);
