@@ -7,9 +7,10 @@ using System.Threading;
 
 namespace Dullahan.Network {
     public class Server<TServerState, TServerDiff, TClientState, TClientDiff> : IDisposable {
+        public TServerState state;
+
         private readonly Dictionary<int, Connection> connectionsByPort = new Dictionary<int, Connection>();
         private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
-        private readonly TServerState state;
         private bool disposedValue;
 
         public Server(

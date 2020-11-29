@@ -40,12 +40,15 @@ namespace Dullahan.Network {
                     Expand();
                 }
 
+                this.size += size;
                 this.start -= size;
                 if (this.start < 0) {
                     this.start = this.buffer.Length + (this.start % this.buffer.Length);
                 }
 
-                Array.Copy(buffer, start, this.buffer, this.start, size);
+                int count = Math.Min(this.buffer.Length - this.start, size);
+                Array.Copy(buffer, start, this.buffer, this.start, count);
+                Array.Copy(buffer, start + count, this.buffer, (this.start + count) % this.buffer.Length, size - count);
 
                 hasLeftEnd = isLeftEnd;
             }
@@ -59,8 +62,11 @@ namespace Dullahan.Network {
                     Expand();
                 }
 
-                this.start = (this.start + size) % this.buffer.Length;
-                Array.Copy(buffer, start, this.buffer, this.start, size);
+                int end = (this.start + this.size) % this.buffer.Length;
+                this.size += size;
+                int count = Math.Min(this.buffer.Length - end, size);
+                Array.Copy(buffer, start, this.buffer, end, count);
+                Array.Copy(buffer, start + count, this.buffer, (end + count) % this.buffer.Length, size - count);
 
                 hasRightEnd = isRightEnd;
             }
@@ -84,6 +90,7 @@ namespace Dullahan.Network {
         private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
         private readonly Thread thread;
         private readonly ArrayPool<byte> arrayPool = ArrayPool<byte>.Create();
+        private DatagramTransportImplementation datagramTransport;
         private DtlsTransport dtlsTransport;
         private bool disposedValue = false;
         private uint nextSequenceNumber = 0;
@@ -91,28 +98,37 @@ namespace Dullahan.Network {
         public bool Connected => dtlsTransport != null;
 
         public Connection(
-            Func<DatagramTransport> getDatagramTransport,
+            Func<DatagramTransportImplementation> getDatagramTransport,
             Func<DatagramTransport, DtlsTransport> getDtlsTransport,
             Action<byte[], int, int> onMessageReceived,
             CancellationToken cancellationToken
         ) {
             thread = new Thread(() => {
-                var datagramTransport = getDatagramTransport();
-                try {
-                    dtlsTransport = getDtlsTransport(datagramTransport);
+                using (var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cancellationTokenSource.Token)) {
+                    datagramTransport = getDatagramTransport();
                     try {
-                        using (var linkedCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cancellationTokenSource.Token)) {
+                        while (!linkedCancellationTokenSource.IsCancellationRequested) {
+                            try {
+                                dtlsTransport = getDtlsTransport(datagramTransport);
+                                Console.WriteLine($"Connected to {datagramTransport.RemoteEndPoint}");
+                                break;
+                            } catch (Exception e) {
+                                // ignore
+                                Console.WriteLine(e);
+                            }
+                        }
+
+                        try {
                             var buffer = new byte[dtlsTransport.GetReceiveLimit()];
                             while (!linkedCancellationTokenSource.IsCancellationRequested) {
                                 int length = dtlsTransport.Receive(buffer, 0, buffer.Length, 1000);
+                                Console.WriteLine($"Received {length} bytes from {datagramTransport.RemoteEndPoint} via DTLS");
                                 if (length > 0) {
                                     int header = buffer[0] | buffer[1] << 8 | (buffer[2] << 16) | (buffer[3] << 24);
                                     bool isLeftEnd = (header & 0x80000000) != 0;
                                     bool isRightEnd = (header & 0x40000000) != 0;
                                     int size = (header & 0x3ff00000) >> 20;
                                     int number = header & 0x000fffff;
-
-                                    Console.WriteLine($"RECEIVED: isLeftEnd = {isLeftEnd}, isRightEnd = {isRightEnd}, size = {size}, number = {number}\nRECEIVED: {BitConverter.ToString(buffer, 0, length)}");
 
                                     if (!isRightEnd && blobsByLeftestNumber.TryGetValue(number + 1, out Blob blob)) {
                                         blobsByLeftestNumber.Remove(number + 1);
@@ -141,41 +157,43 @@ namespace Dullahan.Network {
                                     }
                                 }
                             }
+                        } finally {
+                            dtlsTransport.Close();
                         }
                     } finally {
-                        dtlsTransport.Close();
+                        datagramTransport.Close();
                     }
-                } finally {
-                    datagramTransport.Close();
                 }
             });
             thread.Start();
         }
 
         public void Send(byte[] buffer, int offset, int length) {
-            int payloadSize = dtlsTransport.GetSendLimit() - HEADER_SIZE; // need room for header
-            int fragmentCount = length / payloadSize + (length % payloadSize > 0 ? 1 : 0);
+            int fragmentSizeLimit = dtlsTransport.GetSendLimit() - HEADER_SIZE;
+            int fragmentCount = length / fragmentSizeLimit + (length % fragmentSizeLimit > 0 ? 1 : 0);
             for (int i = 0; i < fragmentCount; ++i) {
                 bool isLeftEnd = i == 0;
                 uint header = isLeftEnd ? 0x80000000 : 0;
+
                 bool isRightEnd = i == fragmentCount - 1;
                 header |= isRightEnd ? (uint)0x40000000 : 0;
-                int size = isRightEnd ? length % payloadSize : payloadSize;
-                if (size > 1024) { throw new InvalidOperationException($"Size of payload ({size}) must fit 10 bits (maximum of 1024)."); }
-                header |= (uint)(size << 20 & 0x3ff00000);
+
+                int fragmentSize = isRightEnd ? length % fragmentSizeLimit : fragmentSizeLimit;
+                if (fragmentSize > fragmentSizeLimit) { throw new InvalidOperationException($"Size of fragment ({fragmentSize}) must fit 10 bits (maximum of {fragmentSizeLimit})."); }
+                header |= (uint)(fragmentSize << 20 & 0x3ff00000);
+
                 uint sequenceNumber = nextSequenceNumber;
                 nextSequenceNumber = (nextSequenceNumber + 1) % 0x000fffff;
                 header |= sequenceNumber;
+
                 var dtlsBuffer = arrayPool.Rent(dtlsTransport.GetSendLimit());
                 dtlsBuffer[0] = (byte)(header & 0xff);
                 dtlsBuffer[1] = (byte)((header >> 8) & 0xff);
                 dtlsBuffer[2] = (byte)((header >> 16) & 0xff);
                 dtlsBuffer[3] = (byte)((header >> 24) & 0xff);
-                Array.Copy(buffer, offset, dtlsBuffer, HEADER_SIZE, size);
-
-                Console.WriteLine($"SENT: isLeftEnd = {isLeftEnd}, isRightEnd = {isRightEnd}, size = {size}, sequenceNumber = {sequenceNumber}\nSENT: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + size)}");
-
-                dtlsTransport.Send(dtlsBuffer, 0, HEADER_SIZE + size);
+                Array.Copy(buffer, offset, dtlsBuffer, HEADER_SIZE, fragmentSize);
+                dtlsTransport.Send(dtlsBuffer, 0, HEADER_SIZE + fragmentSize);
+                Console.WriteLine($"Sent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS");
             }
         }
 
