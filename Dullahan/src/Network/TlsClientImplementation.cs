@@ -1,4 +1,5 @@
 ﻿using Org.BouncyCastle.Crypto.Tls;
+using Org.BouncyCastle.Utilities;
 
 namespace Dullahan.Network {
     public class TlsClientImplementation : DefaultTlsClient {

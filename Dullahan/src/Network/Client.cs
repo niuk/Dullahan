@@ -1,44 +1,40 @@
-﻿using System;
-using System.Net;
-
-using Org.BouncyCastle.Crypto.Tls;
+﻿using Org.BouncyCastle.Crypto.Tls;
 using Org.BouncyCastle.Security;
+using System;
+using System.Net;
+using System.Threading;
 
 namespace Dullahan.Network {
     public class Client<TServerState, TServerDiff, TClientState, TClientDiff> : IDisposable {
-        private readonly DtlsTransport dtlsTransport;
-        private readonly DatagramTransportImplementation datagramTransport;
+        public bool Connected => connection.Connected;
 
-        private TClientState state;
+        public TClientState state;
+
+        private readonly Connection connection;
         private bool disposedValue;
 
         public Client(
             TClientState state,
             IDiffer<TServerState, TServerDiff> serverStateDiffer,
             IDiffer<TClientState, TClientDiff> clientStateDiffer,
-            int localPort,
             EndPoint remoteEndPoint
         ) {
             this.state = state;
-
-            datagramTransport = new DatagramTransportImplementation(
-                new IPEndPoint(IPAddress.Any, localPort),
-                remoteEndPoint);
-
-            Console.WriteLine($"Connecting to {datagramTransport.RemoteEndPoint}");
-            dtlsTransport = new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport);
-            Console.WriteLine($"Connected to {datagramTransport.RemoteEndPoint}");
+            connection = new Connection(
+                () => new DatagramTransportImplementation(new IPEndPoint(IPAddress.Any, 0), remoteEndPoint),
+                datagramTransport => new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport),
+                (buffer, start, count) => Console.WriteLine(BitConverter.ToString(buffer, start, count)),
+                CancellationToken.None);
         }
 
         public void Send(byte[] buffer, int offset, int length) {
-            dtlsTransport.Send(buffer, offset, length);
+            connection.Send(buffer, offset, length);
         }
 
         protected virtual void Dispose(bool disposing) {
             if (!disposedValue) {
                 if (disposing) {
-                    dtlsTransport.Close();
-                    datagramTransport.Close();
+                    connection.Dispose();
                 }
 
                 disposedValue = true;

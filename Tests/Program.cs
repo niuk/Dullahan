@@ -10,15 +10,17 @@ namespace Tests {
         static void Main(string[] args) {
             var server = new Server<int, int, int, int>(0, new PrimitiveDiffer<int>(), new PrimitiveDiffer<int>(), 9000, 1);
 
-            Thread.Sleep(1000);
+            var client = new Client<int, int, int, int>(0, new PrimitiveDiffer<int>(), new PrimitiveDiffer<int>(), new IPEndPoint(IPAddress.Loopback, 9000));
 
-            var client = new Client<int, int, int, int>(0, new PrimitiveDiffer<int>(), new PrimitiveDiffer<int>(), 8000, new IPEndPoint(IPAddress.Loopback, 9000));
-
+            var random = new Random();
             while (true) {
-                Thread.Sleep(1000);
+                if (client.Connected) {
+                    var buffer = new byte[random.Next(0, 15000)];
+                    random.NextBytes(buffer);
+                    client.Send(buffer, 0, buffer.Length);
+                }
 
-                var message = BitConverter.GetBytes(0xdeadbeef);
-                client.Send(message, 0, message.Length);
+                Thread.Sleep(1000);
             }
         }
     }

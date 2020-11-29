@@ -1,5 +1,8 @@
+using Org.BouncyCastle.Crypto.Tls;
+using Org.BouncyCastle.Security;
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Threading;
 
 namespace Dullahan.Network {
@@ -19,7 +22,17 @@ namespace Dullahan.Network {
             this.state = state;
             for (int i = 0; i < connectionCount; ++i) {
                 int port = portStart + i;
-                connectionsByPort.Add(port, new Connection(port, cancellationTokenSource.Token));
+                connectionsByPort.Add(port, new Connection(
+                    () => new DatagramTransportImplementation(new IPEndPoint(IPAddress.Any, port), new IPEndPoint(IPAddress.Any, 0)),
+                    datagramTransport => new DtlsServerProtocol(new SecureRandom()).Accept(new TlsServerImplementation(), datagramTransport),
+                    (buffer, start, count) => Console.WriteLine(BitConverter.ToString(buffer, start, count)),
+                    cancellationTokenSource.Token));
+            }
+        }
+
+        public void Send(byte[] buffer, int offset, int length) {
+            foreach (var connection in connectionsByPort.Values) {
+                connection.Send(buffer, offset, length);
             }
         }
 
