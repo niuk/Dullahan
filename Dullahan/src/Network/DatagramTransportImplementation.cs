@@ -20,7 +20,6 @@ namespace Dullahan.Network {
         private readonly EndPoint localEndPoint;
         private EndPoint remoteEndPoint;
         private Socket socket;
-        private bool disposedValue;
 
         public DatagramTransportImplementation(EndPoint localEndPoint, EndPoint remoteEndPoint) {
             this.localEndPoint = localEndPoint;
@@ -39,13 +38,14 @@ namespace Dullahan.Network {
                             socket.BeginSendTo(buffer, 0, size, SocketFlags.None, this.remoteEndPoint, new AsyncCallback(result => {
                                 try {
                                     int sentBytes = socket.EndSendTo(result);
-                                    Console.WriteLine($"\tSent {sentBytes} to {this.remoteEndPoint} via UDP");
+                                    //Console.WriteLine($"\tSent {sentBytes} to {this.remoteEndPoint} via UDP: {BitConverter.ToString(buffer, 0, sentBytes)}");
                                 } catch (ObjectDisposedException e) {
                                     if (e.ObjectName == typeof(Socket).FullName) {
                                         OpenSocket();
                                     }
                                 } finally {
                                     arrayPool.Return(buffer);
+                                    Thread.Sleep(5); // wait a bit to avoid overwhelming the socket
                                     semaphore.Release(); // start another send
                                 }
                             }), null);
@@ -72,7 +72,7 @@ namespace Dullahan.Network {
                             socket.BeginReceiveFrom(buffer, 0, limit, SocketFlags.None, ref this.remoteEndPoint, new AsyncCallback(result => {
                                 try {
                                     int receivedBytes = socket.EndReceiveFrom(result, ref this.remoteEndPoint);
-                                    Console.WriteLine($"\tReceived {receivedBytes} from {this.remoteEndPoint} via UDP");
+                                    //Console.WriteLine($"\tReceived {receivedBytes} from {this.remoteEndPoint} via UDP: {BitConverter.ToString(buffer, 0, receivedBytes)}");
                                     incoming.Add((buffer, receivedBytes), cancellationTokenSource.Token);
                                 } catch (ObjectDisposedException e) {
                                     if (e.ObjectName == typeof(Socket).FullName) {
@@ -86,6 +86,8 @@ namespace Dullahan.Network {
                             if (e.ObjectName == typeof(Socket).FullName) {
                                 OpenSocket();
                             }
+                        } finally {
+                            arrayPool.Return(buffer);
                         }
                     }
                 }

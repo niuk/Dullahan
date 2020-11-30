@@ -3,6 +3,7 @@ using Org.BouncyCastle.Security;
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Text;
 using System.Threading;
 
 namespace Dullahan.Network {
@@ -24,9 +25,9 @@ namespace Dullahan.Network {
             for (int i = 0; i < connectionCount; ++i) {
                 int port = portStart + i;
                 connectionsByPort.Add(port, new Connection(
-                    () => new DatagramTransportImplementation(new IPEndPoint(IPAddress.Any, port), new IPEndPoint(IPAddress.Any, 0)),
+                    () => (new IPEndPoint(IPAddress.Any, port), new IPEndPoint(IPAddress.Any, 0)),
                     datagramTransport => new DtlsServerProtocol(new SecureRandom()).Accept(new TlsServerImplementation(), datagramTransport),
-                    (buffer, start, count) => Console.WriteLine(BitConverter.ToString(buffer, start, count)),
+                    (buffer, start, count) => Console.WriteLine($"Received message: \"{Encoding.ASCII.GetString(buffer, start, count)}\""),
                     cancellationTokenSource.Token));
             }
         }

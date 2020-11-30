@@ -6,18 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CodeGen\CodeGen.csproj" />
     <ProjectReference Include="..\Dullahan\Dullahan.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="x509-ca.pem">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="x509-client-key.pem">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="x509-client.pem">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="x509-server-key.pem">

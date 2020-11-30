@@ -21,7 +21,7 @@ namespace Dullahan.Network {
         ) {
             this.state = state;
             connection = new Connection(
-                () => new DatagramTransportImplementation(new IPEndPoint(IPAddress.Any, 0), remoteEndPoint),
+                () => (new IPEndPoint(IPAddress.Any, 0), remoteEndPoint),
                 datagramTransport => new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport),
                 (buffer, start, count) => Console.WriteLine(BitConverter.ToString(buffer, start, count)),
                 CancellationToken.None);
