@@ -243,7 +243,7 @@ namespace Dullahan.Network {
                                         }
                                     }
 
-                                    Console.ForegroundColor = ConsoleColor.Yellow;
+                                    Console.ForegroundColor = ConsoleColor.Blue;
                                     Console.Write($"{(blob.hasLeftEnd ? "[" : "(")}{blob.leftNumber}, \"");
                                     for (int j = blob.leftNumber; j != ((blob.rightNumber + 1) & 0xfffff); j = (j + 1) & 0xfffff) {
                                         Console.Write(Encoding.ASCII.GetString(fragmentsByNumber[j].Item1, 0, fragmentsByNumber[j].Item2));
@@ -268,7 +268,8 @@ namespace Dullahan.Network {
         public void Send(byte[] buffer, int offset, int length) {
             var dtlsBuffer = arrayPool.Rent(dtlsTransport.GetSendLimit());
             try {
-                int fragmentSizeLimit = 16;// dtlsTransport.GetSendLimit() - HEADER_SIZE;
+                int fragmentSizeLimit = dtlsTransport.GetSendLimit() - HEADER_SIZE;
+                Debug.Assert(fragmentSizeLimit <= 0x3ff);
                 int fragmentCount = length / fragmentSizeLimit + (length % fragmentSizeLimit > 0 ? 1 : 0);
                 for (int i = 0; i < fragmentCount; ++i) {
                     bool isLeftEnd = i == 0;
