@@ -21,4 +21,12 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Generated\" />
+  </ItemGroup>
+
+  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command="dir&#xD;&#xA;..\CodeGen\bin\Debug\net5.0\CodeGen.exe generate TestServer Generated Source" />
+  </Target>
+
 </Project>

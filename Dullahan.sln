@@ -19,6 +19,9 @@ EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TestClient", "TestClient\TestClient.csproj", "{9036377C-C9C5-4CEC-96FD-1955A2D32132}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TestServer", "TestServer\TestServer.csproj", "{588A14F2-94C1-48EB-9565-4F39C4FF1EEB}"
+	ProjectSection(ProjectDependencies) = postProject
+		{A376A548-CA10-4A74-81F5-214ECDAADE2E} = {A376A548-CA10-4A74-81F5-214ECDAADE2E}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

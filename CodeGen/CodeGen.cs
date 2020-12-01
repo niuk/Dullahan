@@ -55,10 +55,10 @@ namespace Dullahan {
                 assembliesByFullName.Add(assembly.FullName, assembly);
                 foreach (var referencedAssemblyName in assembly.GetReferencedAssemblies()) {
                     try {
-                        Console.WriteLine($"Loading assembly by name: {referencedAssemblyName.FullName}");
+                        //Console.WriteLine($"Loading assembly by name: {referencedAssemblyName.FullName}");
                         LoadAssemblyWithReferencedAssemblies(Assembly.Load(referencedAssemblyName));
                     } catch (FileNotFoundException e) {
-                        Console.Error.WriteLine(e);
+                        //Console.Error.WriteLine(e);
                     }
                 }
             }
@@ -335,6 +335,9 @@ namespace {@namespace} {{
                 diffTypeName = ToExpression(differTypeAndDiffType.Item2);
             } else if (propertyType.IsClass || propertyType.IsInterface) {
                 differTypeName = $"ReferenceDiffer<{propertyTypeName}>";
+                diffTypeName = propertyTypeName;
+            } else if (propertyType.IsPrimitive) {
+                differTypeName = $"PrimitiveDiffer<{propertyTypeName}>";
                 diffTypeName = propertyTypeName;
             } else {
                 var diffType = typeof(IDiffer<,>).GetGenericArguments()[1];

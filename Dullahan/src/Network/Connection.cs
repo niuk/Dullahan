@@ -233,6 +233,7 @@ namespace Dullahan.Network {
                                 }
 
                                 // display blobs
+                                /*
                                 for (int i = (anchorNumber.Value - anchorRange) & 0xfffff; i != ((anchorNumber.Value + 1) & 0xfffff); i = (i + 1) & 0xfffff) {
                                     if (!blobsByLeftNumber.TryGetValue(i, out Blob blob)) {
                                         // also show completed blob
@@ -252,6 +253,7 @@ namespace Dullahan.Network {
                                     Console.ResetColor();
                                 }
                                 Console.WriteLine();
+                                */
                             }
                         } finally {
                             dtlsTransport.Close();
@@ -293,7 +295,7 @@ namespace Dullahan.Network {
                     Array.Copy(buffer, offset, dtlsBuffer, HEADER_SIZE, fragmentSize);
                     offset += fragmentSize;
                     dtlsTransport.Send(dtlsBuffer, 0, HEADER_SIZE + fragmentSize);
-                    Console.WriteLine($"\tSent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + fragmentSize)}");
+                    //Console.WriteLine($"\tSent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + fragmentSize)}");
                 }
             } finally {
                 arrayPool.Return(dtlsBuffer);
