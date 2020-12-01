@@ -72,19 +72,18 @@ namespace Dullahan.Network {
                                     continue;
                                 }
 
-                                Console.WriteLine($"Received {length} bytes from {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(buffer, 0, length)}");
-
+                                //Console.WriteLine($"\tReceived {length} bytes from {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(buffer, 0, length)}");
                                 int header = buffer[0] | buffer[1] << 8 | (buffer[2] << 16) | (buffer[3] << 24);
                                 bool isLeftEnd = (header & 0x80000000) != 0;
                                 bool isRightEnd = (header & 0x40000000) != 0;
                                 int size = (header & 0x3ff00000) >> 20;
                                 int number = header & 0x000fffff;
-
-                                Console.WriteLine($"Received fragment {number}: isLeftEnd = {isLeftEnd}, isRightEnd = {isRightEnd}");
+                                //Console.WriteLine($"Received fragment {number}: isLeftEnd = {isLeftEnd}, isRightEnd = {isRightEnd}");
 
                                 if (anchorNumber.HasValue) {
                                     int minimum = (anchorNumber.Value - anchorRange) & 0xfffff;
                                     int maximum = (anchorNumber.Value + anchorRange) & 0xfffff;
+                                    //Console.WriteLine($"anchorNumber.Value = {anchorNumber.Value}, minimum = {minimum}, number = {number}, maximum = {maximum}");
 
                                     if (minimum < maximum ?
                                         number < minimum || maximum < number :
@@ -94,7 +93,6 @@ namespace Dullahan.Network {
                                         continue;
                                     }
 
-                                    Console.WriteLine($"anchorNumber.Value = {anchorNumber.Value}, minimum = {minimum}, number = {number}, maximum = {maximum}");
                                     if (anchorNumber.Value < maximum ?
                                         anchorNumber.Value < number && number < maximum :
                                         anchorNumber.Value < number || number < maximum
@@ -132,7 +130,7 @@ namespace Dullahan.Network {
                                 var fragmentBuffer = arrayPool.Rent(size);
                                 Array.Copy(buffer, HEADER_SIZE, fragmentBuffer, 0, size);
                                 fragmentsByNumber.Add(number, (fragmentBuffer, size));
-                                Console.WriteLine($"Added fragment {number}, size = {size}: \"{Encoding.ASCII.GetString(fragmentBuffer, 0, size)}\"");
+                                //Console.WriteLine($"Added fragment {number}, size = {size}: \"{Encoding.ASCII.GetString(fragmentBuffer, 0, size)}\"");
 
                                 bool mergeLeft;
                                 int rightNumberOfLeftNeighbor = number == 0 ? 0xfffff : number - 1;
@@ -245,17 +243,13 @@ namespace Dullahan.Network {
                                         }
                                     }
 
+                                    Console.ForegroundColor = ConsoleColor.Yellow;
                                     Console.Write($"{(blob.hasLeftEnd ? "[" : "(")}{blob.leftNumber}, \"");
-                                    bool wroteSomething = false;
                                     for (int j = blob.leftNumber; j != ((blob.rightNumber + 1) & 0xfffff); j = (j + 1) & 0xfffff) {
-                                        var s = Encoding.ASCII.GetString(fragmentsByNumber[j].Item1, 0, fragmentsByNumber[j].Item2);
-                                        Console.Write($"<{s}>");
-                                        wroteSomething = true;
-                                    }
-                                    if (!wroteSomething) {
-                                        Console.WriteLine("WTF");
+                                        Console.Write(Encoding.ASCII.GetString(fragmentsByNumber[j].Item1, 0, fragmentsByNumber[j].Item2));
                                     }
                                     Console.Write($"\", {blob.rightNumber}{(blob.hasRightEnd ? "]" : ")")}");
+                                    Console.ResetColor();
                                 }
                                 Console.WriteLine();
                             }
@@ -274,7 +268,7 @@ namespace Dullahan.Network {
         public void Send(byte[] buffer, int offset, int length) {
             var dtlsBuffer = arrayPool.Rent(dtlsTransport.GetSendLimit());
             try {
-                int fragmentSizeLimit = 32;// dtlsTransport.GetSendLimit() - HEADER_SIZE;
+                int fragmentSizeLimit = 16;// dtlsTransport.GetSendLimit() - HEADER_SIZE;
                 int fragmentCount = length / fragmentSizeLimit + (length % fragmentSizeLimit > 0 ? 1 : 0);
                 for (int i = 0; i < fragmentCount; ++i) {
                     bool isLeftEnd = i == 0;
@@ -298,7 +292,7 @@ namespace Dullahan.Network {
                     Array.Copy(buffer, offset, dtlsBuffer, HEADER_SIZE, fragmentSize);
                     offset += fragmentSize;
                     dtlsTransport.Send(dtlsBuffer, 0, HEADER_SIZE + fragmentSize);
-                    Console.WriteLine($"Sent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + fragmentSize)}");
+                    Console.WriteLine($"\tSent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + fragmentSize)}");
                 }
             } finally {
                 arrayPool.Return(dtlsBuffer);
