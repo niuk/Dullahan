@@ -10,7 +10,6 @@ namespace Dullahan.Network {
     public class DatagramTransportImplementation : DatagramTransport {
         public EndPoint RemoteEndPoint => remoteEndPoint;
 
-        private readonly ArrayPool<byte> arrayPool = ArrayPool<byte>.Create();
         private readonly BlockingCollection<(byte[], int)> incoming = new BlockingCollection<(byte[], int)>();
         private readonly BlockingCollection<(byte[], int)> outgoing = new BlockingCollection<(byte[], int)>();
         private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
@@ -44,7 +43,7 @@ namespace Dullahan.Network {
                         buffer = null;
                     } finally {
                         if (buffer != null) {
-                            arrayPool.Return(buffer);
+                            ArrayPool<byte>.Shared.Return(buffer);
                         }
                     }
                 }
@@ -54,21 +53,21 @@ namespace Dullahan.Network {
             receivingThread = new Thread(() => {
                 while (!cancellationTokenSource.IsCancellationRequested) {
                     int limit = GetReceiveLimit();
-                    var buffer = arrayPool.Rent(limit);
+                    var buffer = ArrayPool<byte>.Shared.Rent(limit);
                     try {
                         // operation can only be canceled by closing the socket
                         // see https://stackoverflow.com/questions/4662553/how-to-abort-sockets-beginreceive
-                        int receivedBytes = socket.ReceiveFrom(buffer, 0, limit, SocketFlags.None, ref this.remoteEndPoint);
+                        int size = socket.ReceiveFrom(buffer, 0, limit, SocketFlags.None, ref this.remoteEndPoint);
                         //Console.WriteLine($"\t\tReceived {receivedBytes} from {this.remoteEndPoint} via UDP: {BitConverter.ToString(buffer, 0, receivedBytes)}");
 
-                        incoming.Add((buffer, receivedBytes), cancellationTokenSource.Token);
+                        incoming.Add((buffer, size), cancellationTokenSource.Token);
                         buffer = null;
                     } catch (ObjectDisposedException e) when (e.ObjectName == typeof(Socket).FullName && !cancellationTokenSource.IsCancellationRequested) {
                         // reopen socket if socket was closed unintentionally
                         OpenSocket();
                     } finally {
                         if (buffer != null) {
-                            arrayPool.Return(buffer);
+                            ArrayPool<byte>.Shared.Return(buffer);
                         }
                     }
                 }
@@ -78,10 +77,14 @@ namespace Dullahan.Network {
 
         public void Close() {
             cancellationTokenSource.Cancel();
-            // must close the socket first to interrupt threads waiting on SendTo or ReceiveFrom
-            socket.Close();
-            sendingThread.Join();
-            receivingThread.Join();
+            try {
+                // must close the socket first to interrupt threads waiting on SendTo or ReceiveFrom
+                socket.Close();
+                sendingThread.Join();
+                receivingThread.Join();
+            } finally {
+                cancellationTokenSource.Dispose();
+            }
         }
 
         public int GetReceiveLimit() {
@@ -103,7 +106,7 @@ namespace Dullahan.Network {
                         return -1;
                     }
                 } finally {
-                    arrayPool.Return(datagram.Item1);
+                    ArrayPool<byte>.Shared.Return(datagram.Item1);
                 }
             } else {
                 return -1;
@@ -115,14 +118,14 @@ namespace Dullahan.Network {
                 throw new InvalidOperationException($"length ({len}) exceeds send limit ({GetSendLimit()})");
             }
 
-            var buffer = arrayPool.Rent(len);
+            var buffer = ArrayPool<byte>.Shared.Rent(len);
             try {
                 Array.Copy(buf, off, buffer, 0, len);
                 outgoing.Add((buffer, len), cancellationTokenSource.Token);
                 buffer = null;
             } finally {
                 if (buffer != null) {
-                    arrayPool.Return(buffer);
+                    ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
         }

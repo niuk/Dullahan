@@ -27,11 +27,7 @@ namespace TestServer {
                 var differ = new PrimitiveDiffer<System.Int32>();
                 for (int i = 0; i < x_states.Count; ++i) {
                     int index = x_states.Start + i;
-                    if (differ.Diff(x_states[index], value, out System.Int32 diff)) {
-                        x_diffs[index] = new Maybe<System.Int32>.Just(diff);
-                    } else {
-                        x_diffs[index] = new Maybe<System.Int32>.Nothing();
-                    }
+                    x_diffs[index] = differ.Diff(x_states[index], value);
                 }
 
                 x_states.PushEnd(value);
@@ -62,11 +58,7 @@ namespace TestServer {
                 var differ = new PrimitiveDiffer<System.Int32>();
                 for (int i = 0; i < y_states.Count; ++i) {
                     int index = y_states.Start + i;
-                    if (differ.Diff(y_states[index], value, out System.Int32 diff)) {
-                        y_diffs[index] = new Maybe<System.Int32>.Just(diff);
-                    } else {
-                        y_diffs[index] = new Maybe<System.Int32>.Nothing();
-                    }
+                    y_diffs[index] = differ.Diff(y_states[index], value);
                 }
 
                 y_states.PushEnd(value);

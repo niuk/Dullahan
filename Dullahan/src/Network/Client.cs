@@ -1,40 +1,79 @@
-﻿using Org.BouncyCastle.Crypto.Tls;
-using Org.BouncyCastle.Security;
-using System;
+﻿using System;
+using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Threading;
 
 namespace Dullahan.Network {
-    public class Client<TServerState, TServerDiff, TClientState, TClientDiff> : IDisposable {
+    public class Client<TLocalState, TRemoteState> : IDisposable {
         public bool Connected => connection.Connected;
 
-        public TClientState state;
+        public TLocalState localState { private get; set; }
+        private TLocalState lastAckedLocalState;
 
+        public TRemoteState remoteState { get; private set; }
+
+        private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
         private readonly Connection connection;
+        private readonly Thread sendThread;
         private bool disposedValue;
 
         public Client(
-            TClientState state,
-            IDiffer<TServerState, TServerDiff> serverStateDiffer,
-            IDiffer<TClientState, TClientDiff> clientStateDiffer,
-            EndPoint remoteEndPoint
+            Func<BinaryReader, TLocalState> readLocalState,
+            Action<TRemoteState, BinaryWriter> writeRemoteState,
+            IDiffer<(BinaryWriter, TLocalState), BinaryReader> localStateDiffer,
+            IDiffer<(BinaryWriter, TRemoteState), BinaryReader> remoteStateDiffer,
+            EndPoint localEndPoint,
+            EndPoint remoteEndPoint,
+            TimeSpan sendInterval
         ) {
-            this.state = state;
             connection = new Connection(
-                () => (new IPEndPoint(IPAddress.Any, 0), remoteEndPoint),
-                datagramTransport => new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport),
-                (buffer, start, count) => Console.WriteLine(BitConverter.ToString(buffer, start, count)),
-                CancellationToken.None);
-        }
+                localEndPoint,
+                remoteEndPoint,
+                (buffer, index, size) => {
+                    using (var reader = new BinaryReader(new MemoryStream(buffer, index, size, false))) {
+                        lastAckedLocalState = readLocalState(reader);
+                        remoteState = remoteStateDiffer.Patch((null, remoteState), reader).Item2;
+                    }
+                });
 
-        public void Send(byte[] buffer, int offset, int length) {
-            connection.Send(buffer, offset, length);
+            sendThread = new Thread(() => {
+                var memoryStream = new MemoryStream();
+                var stopwatch = new Stopwatch();
+                while (!cancellationTokenSource.IsCancellationRequested) {
+                    stopwatch.Restart();
+
+                    memoryStream.Position = 0;
+                    using (var writer = new BinaryWriter(memoryStream)) {
+                        writeRemoteState(remoteState, writer);
+                        localStateDiffer.Diff((writer, localState), (writer, lastAckedLocalState));
+                        if (memoryStream.Position > int.MaxValue) {
+                            throw new OverflowException();
+                        }
+
+                        connection.SendMessage(memoryStream.GetBuffer(), 0, (int)memoryStream.Position);
+                    }
+
+                    var elapsed = stopwatch.Elapsed;
+                    if (sendInterval > elapsed) {
+                        Thread.Sleep(sendInterval - elapsed);
+                    }
+                }
+            });
+            sendThread.Start();
         }
 
         protected virtual void Dispose(bool disposing) {
             if (!disposedValue) {
                 if (disposing) {
                     connection.Dispose();
+
+                    cancellationTokenSource.Cancel();
+                    try {
+                        sendThread.Join();
+                    } finally {
+                        cancellationTokenSource.Dispose();
+                    }
                 }
 
                 disposedValue = true;

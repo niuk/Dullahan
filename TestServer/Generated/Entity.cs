@@ -1,14 +1,18 @@
 /* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using System;
 using Dullahan;
 
 namespace TestServer {
     public class Entity {
+        public readonly Guid id = Guid.NewGuid();
+
         public World world { get; private set; }
 
         private Entity entity => this;
 
         public Entity(World world) {
             this.world = world;
+            world.entitiesById.Add(id, this);
         }
 
         private readonly Ring<int> inputComponent_ticks = new Ring<int>();
@@ -36,11 +40,7 @@ namespace TestServer {
                 var differ = new ReferenceDiffer<TestServer.Source.Components.IInputComponent>();
                 for (int i = 0; i < inputComponent_states.Count; ++i) {
                     int index = inputComponent_states.Start + i;
-                    if (differ.Diff(inputComponent_states[index], value, out TestServer.Source.Components.IInputComponent diff)) {
-                        inputComponent_diffs[index] = new Maybe<TestServer.Source.Components.IInputComponent>.Just(diff);
-                    } else {
-                        inputComponent_diffs[index] = new Maybe<TestServer.Source.Components.IInputComponent>.Nothing();
-                    }
+                    inputComponent_diffs[index] = differ.Diff(inputComponent_states[index], value);
                 }
 
                 inputComponent_states.PushEnd(value);
@@ -79,11 +79,7 @@ namespace TestServer {
                 var differ = new ReferenceDiffer<TestServer.Source.Components.IPositionComponent>();
                 for (int i = 0; i < positionComponent_states.Count; ++i) {
                     int index = positionComponent_states.Start + i;
-                    if (differ.Diff(positionComponent_states[index], value, out TestServer.Source.Components.IPositionComponent diff)) {
-                        positionComponent_diffs[index] = new Maybe<TestServer.Source.Components.IPositionComponent>.Just(diff);
-                    } else {
-                        positionComponent_diffs[index] = new Maybe<TestServer.Source.Components.IPositionComponent>.Nothing();
-                    }
+                    positionComponent_diffs[index] = differ.Diff(positionComponent_states[index], value);
                 }
 
                 positionComponent_states.PushEnd(value);

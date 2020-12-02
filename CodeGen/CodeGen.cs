@@ -108,30 +108,61 @@ namespace Dullahan {
 
             // World.cs
             var worldCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using System;
+using System.Collections.Generic;
 using Dullahan;
 
 namespace {@namespace} {{
     public class World {{
         public int tick {{ get; private set; }}
+
+        public readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
 ";
 
             // Entity.cs
             var entityCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using System;
 using Dullahan;
 
 namespace {@namespace} {{
     public class Entity {{
+        public readonly Guid id = Guid.NewGuid();
+
         public World world {{ get; private set; }}
 
         private Entity entity => this;
 
         public Entity(World world) {{
             this.world = world;
+            world.entitiesById.Add(id, this);
         }}
+";
+
+            // EntityDiffer.cs
+            var entityDifferCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using Dullahan;
+
+namespace {@namespace} {{
+    public class EntityDiffer : IDiffer<(Entity, int), (byte[], int, int)> {{
+";
+
+            // EntityDiffer.Diff
+            var entityDiffCode = $@"
+        public Maybe<(byte[], int, int)> Diff((Entity, int) left, (Entity, int) right) {{
+";
+
+            // EntityDiffer.Patch
+            var entityPatchCode = $@"
+        public (Entity, int) Patch((Entity, int) diffable, (byte[], int, int) diff) {{
+            int oldTick = diff.Item1[0] | diff.Item1[1] << 8 | diff.Item1[2] << 16 | diff.Item1[3] << 24;
+            int newTick = diff.Item1[4] | diff.Item1[5] << 8 | diff.Item1[6] << 16 | diff.Item1[7] << 24;
 ";
 
             // generate system classes first so that we know which systems need to add/remove component tuples when components are added to/removed from entities
             var systemModificationsForComponentType = new Dictionary<Type, HashSet<string>>();
+            // keep track of systems and their dependencies so that we can tick them in the correct order in World.Tick
+            var systemTypes = new HashSet<Type>();
+            var dependenciesBySystemType = new Dictionary<Type, HashSet<Type>>(); // no actual concurrency; just want AddOrUpdate
             foreach (var type in GetAllTypes()) {
                 if (typeof(ECS.ISystem).IsAssignableFrom(type) && type.IsAbstract && type != typeof(ECS.ISystem)) {
                     if (!type.Name.EndsWith("System")) {
@@ -139,6 +170,22 @@ namespace {@namespace} {{
                     }
 
                     Console.WriteLine($"Found {typeof(ECS.ISystem)} implementation {type}");
+
+                    systemTypes.Add(type);
+                    var newDependencies = type.GetCustomAttributes<ECS.TickAfter>().Select(attr => attr.systemType);
+                    if (dependenciesBySystemType.TryGetValue(type, out HashSet<Type> oldDependencies)) {
+                        oldDependencies.UnionWith(newDependencies);
+                    } else {
+                        dependenciesBySystemType.Add(type, new HashSet<Type>(newDependencies));
+                    }
+
+                    foreach (var dependant in type.GetCustomAttributes<ECS.TickBefore>().Select(attr => attr.systemType)) {
+                        if (dependenciesBySystemType.TryGetValue(dependant, out oldDependencies)) {
+                            oldDependencies.UnionWith(new[] { type });
+                        } else {
+                            dependenciesBySystemType.Add(dependant, new HashSet<Type>(new[] { type }));
+                        }
+                    }
 
                     var systemTypeName = type.Name + "_Implementation";
                     var systemPropertyName = Decapitalize(type.Name);
@@ -156,13 +203,6 @@ using System.Linq;
 
 namespace {@namespace} {{
     public class {systemTypeName} : {type.FullName} {{
-        private int _tick = 0;
-        public override int tick => _tick;
-
-        public override void Tick() {{
-            ++_tick;
-            base.Tick();
-        }}
 ";
 
                     foreach (var method in type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)) {
@@ -302,7 +342,58 @@ namespace {@namespace} {{
 ";
             File.WriteAllText(Path.Combine(outputPath, "Entity.cs"), entityCode);
 
+            entityDifferCode += $@"
+{entityDiffCode}
+        }}
+{entityPatchCode}
+            return (diffable.Item1, newTick);
+        }}
+    }}
+}}
+";
+            File.WriteAllText(Path.Combine(outputPath, "EntityDiffer.cs"), entityDifferCode);
+
             worldCode += @"
+        public void Tick() {
+            ++tick;
+";
+
+            while (systemTypes.Count > 0) {
+                worldCode += @"
+            // no mutual dependencies:
+";
+                var tickedSystemTypes = new HashSet<Type>();
+
+                foreach (var systemType in systemTypes) {
+                    if (dependenciesBySystemType.TryGetValue(systemType, out HashSet<Type> dependencies)) {
+                        if (dependencies.Count > 0) {
+                            continue;
+                        } else {
+                            tickedSystemTypes.Add(systemType);
+                        }
+                    } else {
+                        tickedSystemTypes.Add(systemType);
+                    }
+
+                    worldCode += $@"
+            {Decapitalize(systemType.Name)}.Tick();
+";
+                }
+
+                if (tickedSystemTypes.Count == 0) {
+                    throw new InvalidProgramException("We got circular system dependencies!");
+                }
+
+                systemTypes.ExceptWith(tickedSystemTypes);
+                foreach (var systemType in systemTypes) {
+                    if (dependenciesBySystemType.TryGetValue(systemType, out HashSet<Type> dependencies)) {
+                        dependencies.ExceptWith(tickedSystemTypes);
+                    }
+                }
+            }
+
+            worldCode += @"
+        }
     }
 }
 ";
@@ -362,11 +453,7 @@ namespace {@namespace} {{
                 var differ = new {differTypeName}();
                 for (int i = 0; i < {propertyName}_states.Count; ++i) {{
                     int index = {propertyName}_states.Start + i;
-                    if (differ.Diff({propertyName}_states[index], value, out {diffTypeName} diff)) {{
-                        {propertyName}_diffs[index] = new Maybe<{diffTypeName}>.Just(diff);
-                    }} else {{
-                        {propertyName}_diffs[index] = new Maybe<{diffTypeName}>.Nothing();
-                    }}
+                    {propertyName}_diffs[index] = differ.Diff({propertyName}_states[index], value);
                 }}
 
                 {propertyName}_states.PushEnd(value);

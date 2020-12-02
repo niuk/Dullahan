@@ -1,15 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
 using TestServer.Source.Components;
+using Dullahan.ECS;
 
 namespace TestServer.Source.Systems {
-    public abstract class MovementSystem : Dullahan.ECS.ISystem {
-        public abstract int tick { get; }
-
+    [TickAfter(typeof(InputSystem))]
+    public abstract class MovementSystem : ISystem {
         protected abstract IEnumerable<Tuple<IInputComponent, IPositionComponent>> controllables { get; }
 
         public virtual void Tick() {
-            throw new NotImplementedException();
+            foreach (var (inputComponent, positionComponent) in controllables) {
+                positionComponent.x += inputComponent.deltaX;
+                positionComponent.y += inputComponent.deltaY;
+            }
         }
     }
 }

@@ -1,21 +1,42 @@
 ﻿using Dullahan;
 using Dullahan.Network;
+using System;
 using System.Net;
 using System.Threading;
 
 namespace TestClient {
     class Program {
         static void Main(string[] args) {
-            var client = new Client<int, int, int, int>(0, new PrimitiveDiffer<int>(), new PrimitiveDiffer<int>(), new IPEndPoint(IPAddress.Loopback, 9000));
-            while (!client.Connected) {
-                Thread.Sleep(1000);
-            }
+            var client = new Client<(int, (int, int)), (int, TestServer.World)>(
+                readLocalState: null,
+                writeRemoteState: null,
+                localStateDiffer: null,
+                remoteStateDiffer: null,
+                localEndPoint: new IPEndPoint(IPAddress.Any, 0),
+                remoteEndPoint: new IPEndPoint(IPAddress.Parse(args[0]), int.Parse(args[1])),
+                TimeSpan.FromSeconds(0.1));
 
             for (int i = 0; ; ++i) {
-                var b = System.Text.Encoding.UTF8.GetBytes($"{i}: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.");
-                client.Send(b, 0, b.Length);
+                int deltaX = 0;
+                int deltaY = 0;
+                var key = Console.ReadKey(true).Key;
+                switch (key) {
+                    case ConsoleKey.LeftArrow:
+                        deltaX = -1;
+                        break;
+                    case ConsoleKey.RightArrow:
+                        deltaX = 1;
+                        break;
+                    case ConsoleKey.UpArrow:
+                        deltaY = 1;
+                        break;
+                    case ConsoleKey.DownArrow:
+                        deltaY = -1;
+                        break;
+                }
 
-                Thread.Sleep(1000);
+                client.localState = (i, (deltaX, deltaY));
+                Thread.Sleep(10);
             }
         }
     }

@@ -1,53 +1,51 @@
-using Org.BouncyCastle.Crypto.Tls;
-using Org.BouncyCastle.Security;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
-using System.Text;
-using System.Threading;
 
 namespace Dullahan.Network {
-    public class Server<TServerState, TServerDiff, TClientState, TClientDiff> : IDisposable {
-        public TServerState state;
-
-        private readonly Dictionary<int, Connection> connectionsByPort = new Dictionary<int, Connection>();
-        private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
-        private bool disposedValue;
-
-        public Server(
-            TServerState state,
-            IDiffer<TServerState, TServerDiff> serverStateDiffer,
-            IDiffer<TClientState, TClientDiff> clientStateDiffer,
-            int portStart,
-            int connectionCount
-        ) {
-            this.state = state;
-            for (int i = 0; i < connectionCount; ++i) {
-                int port = portStart + i;
-                connectionsByPort.Add(port, new Connection(
-                    () => (new IPEndPoint(IPAddress.Any, port), new IPEndPoint(IPAddress.Any, 0)),
-                    datagramTransport => new DtlsServerProtocol(new SecureRandom()).Accept(new TlsServerImplementation(), datagramTransport),
-                    (buffer, start, count) => Console.WriteLine($"Received message: \"{Encoding.ASCII.GetString(buffer, start, count)}\""),
-                    cancellationTokenSource.Token));
+    public class Server<TServerState, TClientState> : IDisposable {
+        public TServerState serverState {
+            set {
+                foreach (var client in clientsByPort.Values) {
+                    client.localState = value;
+                }
             }
         }
 
-        public void Send(byte[] buffer, int offset, int length) {
-            foreach (var connection in connectionsByPort.Values) {
-                connection.Send(buffer, offset, length);
+        public TClientState this[int port] => clientsByPort[port].remoteState;
+
+        private readonly Dictionary<int, Client<TServerState, TClientState>> clientsByPort = new Dictionary<int, Client<TServerState, TClientState>>();
+        private bool disposedValue;
+
+        public Server(
+            Func<BinaryReader, TServerState> readServerState,
+            Action<TClientState, BinaryWriter> writeClientState,
+            IDiffer<(BinaryWriter, TServerState), BinaryReader> serverStateDiffer,
+            IDiffer<(BinaryWriter, TClientState), BinaryReader> clientStateDiffer,
+            int portStart,
+            int capacity,
+            TimeSpan sendRate
+        ) {
+            for (int i = 0; i < capacity; ++i) {
+                // can't use `i` directly because it gets overwritten during iteration
+                int port = portStart + i;
+                clientsByPort.Add(port, new Client<TServerState, TClientState>(
+                    readServerState,
+                    writeClientState,
+                    serverStateDiffer,
+                    clientStateDiffer,
+                    new IPEndPoint(IPAddress.Any, port),
+                    new IPEndPoint(IPAddress.Any, 0),
+                    sendRate));
             }
         }
 
         protected virtual void Dispose(bool disposing) {
             if (!disposedValue) {
                 if (disposing) {
-                    cancellationTokenSource.Cancel();
-                    try {
-                        foreach (var connection in connectionsByPort.Values) {
-                            connection.Dispose();
-                        }
-                    } finally {
-                        cancellationTokenSource.Dispose();
+                    foreach (var client in clientsByPort.Values) {
+                        client.Dispose();
                     }
                 }
 

@@ -1,12 +1,15 @@
 ﻿namespace Dullahan {
     public class PrimitiveDiffer<T> : IDiffer<T, T> where T : struct {
-        public bool Diff(T left, T right, out T diff) {
-            diff = right;
-            return Equals(left, right);
+        public Maybe<T> Diff(T left, T right) {
+            if (Equals(left, right)) {
+                return new Maybe<T>.Nothing();
+            } else {
+                return new Maybe<T>.Just(right);
+            }
         }
 
-        public void Patch(ref T diffable, T diff) {
-            diffable = diff;
+        public T Patch(T diffable, T diff) {
+            return diff;
         }
     }
 }
