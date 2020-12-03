@@ -3,15 +3,15 @@ using Dullahan;
 using System.IO;
 
 namespace TestServer {
-    public class InputComponentDiffer : IDiffer<InputComponent> {
+    public class InputComponentDiffer : IDiffer<(InputComponent, int)> {
 
 
-        public bool Diff(InputComponent oldComponent, InputComponent newComponent, BinaryWriter writer) {
+        public bool Diff((InputComponent, int) componentAtOldTick, (InputComponent, int) componentAtNewTick, BinaryWriter writer) {
             return true;
 
         }
 
-        public void Patch(ref InputComponent component, BinaryReader reader) {
+        public void Patch(ref (InputComponent, int) component, BinaryReader reader) {
 
         }
     }

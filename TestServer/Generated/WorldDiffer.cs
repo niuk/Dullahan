@@ -9,7 +9,6 @@ namespace TestServer {
     public class WorldDiffer : IDiffer<(World, int)> {
         private readonly EntityDiffer entityDiffer = new EntityDiffer();
 
-
         public bool Diff((World, int) worldAtOldTick, (World, int) worldAtNewTick, BinaryWriter writer) {
             var oldWorld = worldAtOldTick.Item1;
             var newWorld = worldAtNewTick.Item1;
@@ -19,6 +18,8 @@ namespace TestServer {
 
             int oldTick = worldAtOldTick.Item2;
             int newTick = worldAtNewTick.Item2;
+
+            writer.Write(newTick - oldTick);
 
             // reserve room for count of changed entities
             int startPosition = writer.GetPosition();
@@ -70,11 +71,36 @@ namespace TestServer {
             }
 
             return changedCount > 0 || disposed.Count > 0 || constructed.Count > 0;
-
         }
 
         public void Patch(ref (World, int) worldAtTick, BinaryReader reader) {
+            var world = worldAtTick.Item1;
+            var tick = worldAtTick.Item2;
 
+            int deltaTick = reader.ReadInt32();
+            world.AddTick(world.tick + deltaTick);
+
+            int changedCount = reader.ReadInt32();
+            for (int i = 0; i < changedCount; ++i) {
+                var id = new Guid(reader.ReadBytes(16));
+                var entityAtTick = (world.entitiesById[id], tick);
+                entityDiffer.Patch(ref entityAtTick, reader);
+                world.entitiesById[id] = entityAtTick.Item1;
+            }
+
+            int disposedCount = reader.ReadInt32();
+            for (int i = 0; i < disposedCount; ++i) {
+                world.entitiesById.Remove(new Guid(reader.ReadBytes(16)));
+            }
+
+            int constructedCount = reader.ReadInt32();
+            for (int i = 0; i < constructedCount; ++i) {
+                var id = new Guid(reader.ReadBytes(16));
+                var entityAtTick = (default(Entity), tick);
+                entityDiffer.Patch(ref entityAtTick, reader);
+                world.entitiesById.Add(id, entityAtTick.Item1);
+            }
         }
+
     }
 }

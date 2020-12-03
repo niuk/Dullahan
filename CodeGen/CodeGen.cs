@@ -118,6 +118,11 @@ namespace {@namespace} {{
     public class World : IReadOnlyDictionary<int, (World, int)> {{
         public int tick => ticks.Max;
         private readonly SortedSet<int> ticks = new SortedSet<int>();
+
+        public void AddTick(int tick) {{
+            ticks.Add(tick);
+        }}
+
         public IEnumerable<int> Keys => ticks;
         public IEnumerable<(World, int)> Values => Keys.Select(key => (this, key));
         public int Count => ticks.Count;
@@ -154,10 +159,7 @@ using System.Linq;
 namespace {@namespace} {{
     public class WorldDiffer : IDiffer<(World, int)> {{
         private readonly EntityDiffer entityDiffer = new EntityDiffer();
-";
 
-            // WorldDiffer.Diff
-            var worldDiffCode = $@"
         public bool Diff((World, int) worldAtOldTick, (World, int) worldAtNewTick, BinaryWriter writer) {{
             var oldWorld = worldAtOldTick.Item1;
             var newWorld = worldAtNewTick.Item1;
@@ -167,6 +169,8 @@ namespace {@namespace} {{
 
             int oldTick = worldAtOldTick.Item2;
             int newTick = worldAtNewTick.Item2;
+
+            writer.Write(newTick - oldTick);
 
             // reserve room for count of changed entities
             int startPosition = writer.GetPosition();
@@ -218,11 +222,36 @@ namespace {@namespace} {{
             }}
 
             return changedCount > 0 || disposed.Count > 0 || constructed.Count > 0;
-";
+        }}
 
-            // WorldDiffer.Patch
-            var worldPatchCode = $@"
         public void Patch(ref (World, int) worldAtTick, BinaryReader reader) {{
+            var world = worldAtTick.Item1;
+            var tick = worldAtTick.Item2;
+
+            int deltaTick = reader.ReadInt32();
+            world.AddTick(world.tick + deltaTick);
+
+            int changedCount = reader.ReadInt32();
+            for (int i = 0; i < changedCount; ++i) {{
+                var id = new Guid(reader.ReadBytes(16));
+                var entityAtTick = (world.entitiesById[id], tick);
+                entityDiffer.Patch(ref entityAtTick, reader);
+                world.entitiesById[id] = entityAtTick.Item1;
+            }}
+
+            int disposedCount = reader.ReadInt32();
+            for (int i = 0; i < disposedCount; ++i) {{
+                world.entitiesById.Remove(new Guid(reader.ReadBytes(16)));
+            }}
+
+            int constructedCount = reader.ReadInt32();
+            for (int i = 0; i < constructedCount; ++i) {{
+                var id = new Guid(reader.ReadBytes(16));
+                var entityAtTick = (default(Entity), tick);
+                entityDiffer.Patch(ref entityAtTick, reader);
+                world.entitiesById.Add(id, entityAtTick.Item1);
+            }}
+        }}
 ";
 
             // Entity.cs
@@ -264,11 +293,15 @@ namespace {@namespace} {{
             // EntityDiffer.Diff
             var entityDiffCode = $@"
         public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {{
-            if (entityAtOldTick.Item1 != entityAtNewTick.Item1) {{
+            var oldEntity = entityAtOldTick.Item1;
+            var newEntity = entityAtNewTick.Item1;
+
+            if (oldEntity != newEntity) {{
                 throw new InvalidOperationException(""Can only diff the same entity at different ticks."");
             }}
 
-            return true;
+            int oldTick = entityAtOldTick.Item2;
+            int newTick = entityAtNewTick.Item2;
 ";
 
             // EntityDiffer.Patch
@@ -400,7 +433,7 @@ namespace {@namespace} {{
 
                     Console.WriteLine($"Found {typeof(ECS.IComponent)} implementation {type}");
 
-                    var componentTypeName = type.Name.Substring(1);
+                    var componentTypeName = type.Name[1..];
                     var componentPropertyName = Decapitalize(componentTypeName);
 
                     Console.WriteLine($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
@@ -427,18 +460,18 @@ using Dullahan;
 using System.IO;
 
 namespace {@namespace} {{
-    public class {componentTypeName}Differ : IDiffer<{componentTypeName}> {{
+    public class {componentTypeName}Differ : IDiffer<({componentTypeName}, int)> {{
 ";
 
                     // EntityDiffer.Diff
                     var componentDiffCode = $@"
-        public bool Diff({componentTypeName} oldComponent, {componentTypeName} newComponent, BinaryWriter writer) {{
+        public bool Diff(({componentTypeName}, int) componentAtOldTick, ({componentTypeName}, int) componentAtNewTick, BinaryWriter writer) {{
             return true;
 ";
 
                     // EntityDiffer.Patch
                     var componentPatchCode = $@"
-        public void Patch(ref {componentTypeName} component, BinaryReader reader) {{
+        public void Patch(ref ({componentTypeName}, int) component, BinaryReader reader) {{
 ";
 
                     var getters = new HashSet<string>();
@@ -487,6 +520,14 @@ namespace {@namespace} {{
 
                     Console.WriteLine($"Adding property \"{componentPropertyName}\" to Entity class...");
                     GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode, ref entityConstructorCode);
+
+                    entityDifferCode += $@"
+        private readonly {componentTypeName}Differ {componentPropertyName}Differ = new {componentTypeName}Differ();
+";
+
+                    entityDiffCode += $@"
+            {componentPropertyName}Differ.Diff((oldEntity.{componentPropertyName}, oldTick), (newEntity.{componentPropertyName}, newTick), writer);
+";
                 }
             }
 
@@ -555,10 +596,6 @@ namespace {@namespace} {{
             File.WriteAllText(Path.Combine(outputPath, "World.cs"), worldCode);
 
             worldDifferCode += $@"
-{worldDiffCode}
-        }}
-{worldPatchCode}
-        }}
     }}
 }}
 ";
@@ -611,10 +648,11 @@ namespace {@namespace} {{
 
             set {{{string.Join("\r\n", onSet)}
                 if ({propertyName}_ticks.Count > 0 && {propertyName}_ticks.PeekEnd() == entity.world.tick) {{
-                    {propertyName}_states.PopEnd();
                     {propertyName}_ticks.PopEnd();
+                    {propertyName}_states.PopEnd();
                 }}
 
+                {propertyName}_diffWriter.SetPosition(0);
                 for (int i = 0; i < {propertyName}_states.Count; ++i) {{
                     int index = {propertyName}_states.Start + i;
                     {propertyName}_diffs[index] = {propertyName}_differ.Diff({propertyName}_states[index], ({actualTypeName})value, {propertyName}_diffWriter);
@@ -624,9 +662,9 @@ namespace {@namespace} {{
                 {propertyName}_ticks.PushEnd(entity.world.tick);
 
                 while ({propertyName}_diffs.Count > 0 && !{propertyName}_diffs.PeekEnd()) {{
+                    {propertyName}_diffs.PopEnd();
                     {propertyName}_ticks.PopEnd();
                     {propertyName}_states.PopEnd();
-                    {propertyName}_diffs.PopEnd();
                 }}
             }}
         }}

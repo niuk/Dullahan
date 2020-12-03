@@ -35,10 +35,11 @@ namespace TestServer {
                 }
 
                 if (inputComponent_ticks.Count > 0 && inputComponent_ticks.PeekEnd() == entity.world.tick) {
-                    inputComponent_states.PopEnd();
                     inputComponent_ticks.PopEnd();
+                    inputComponent_states.PopEnd();
                 }
 
+                inputComponent_diffWriter.SetPosition(0);
                 for (int i = 0; i < inputComponent_states.Count; ++i) {
                     int index = inputComponent_states.Start + i;
                     inputComponent_diffs[index] = inputComponent_differ.Diff(inputComponent_states[index], (InputComponent)value, inputComponent_diffWriter);
@@ -48,9 +49,9 @@ namespace TestServer {
                 inputComponent_ticks.PushEnd(entity.world.tick);
 
                 while (inputComponent_diffs.Count > 0 && !inputComponent_diffs.PeekEnd()) {
+                    inputComponent_diffs.PopEnd();
                     inputComponent_ticks.PopEnd();
                     inputComponent_states.PopEnd();
-                    inputComponent_diffs.PopEnd();
                 }
             }
         }
@@ -76,10 +77,11 @@ namespace TestServer {
                 }
 
                 if (positionComponent_ticks.Count > 0 && positionComponent_ticks.PeekEnd() == entity.world.tick) {
-                    positionComponent_states.PopEnd();
                     positionComponent_ticks.PopEnd();
+                    positionComponent_states.PopEnd();
                 }
 
+                positionComponent_diffWriter.SetPosition(0);
                 for (int i = 0; i < positionComponent_states.Count; ++i) {
                     int index = positionComponent_states.Start + i;
                     positionComponent_diffs[index] = positionComponent_differ.Diff(positionComponent_states[index], (PositionComponent)value, positionComponent_diffWriter);
@@ -89,9 +91,9 @@ namespace TestServer {
                 positionComponent_ticks.PushEnd(entity.world.tick);
 
                 while (positionComponent_diffs.Count > 0 && !positionComponent_diffs.PeekEnd()) {
+                    positionComponent_diffs.PopEnd();
                     positionComponent_ticks.PopEnd();
                     positionComponent_states.PopEnd();
-                    positionComponent_diffs.PopEnd();
                 }
             }
         }

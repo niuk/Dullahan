@@ -8,6 +8,11 @@ namespace TestServer {
     public class World : IReadOnlyDictionary<int, (World, int)> {
         public int tick => ticks.Max;
         private readonly SortedSet<int> ticks = new SortedSet<int>();
+
+        public void AddTick(int tick) {
+            ticks.Add(tick);
+        }
+
         public IEnumerable<int> Keys => ticks;
         public IEnumerable<(World, int)> Values => Keys.Select(key => (this, key));
         public int Count => ticks.Count;

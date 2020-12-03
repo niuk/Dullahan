@@ -20,10 +20,11 @@ namespace TestServer {
 
             set {
                 if (deltaX_ticks.Count > 0 && deltaX_ticks.PeekEnd() == entity.world.tick) {
-                    deltaX_states.PopEnd();
                     deltaX_ticks.PopEnd();
+                    deltaX_states.PopEnd();
                 }
 
+                deltaX_diffWriter.SetPosition(0);
                 for (int i = 0; i < deltaX_states.Count; ++i) {
                     int index = deltaX_states.Start + i;
                     deltaX_diffs[index] = deltaX_differ.Diff(deltaX_states[index], (System.Int32)value, deltaX_diffWriter);
@@ -33,9 +34,9 @@ namespace TestServer {
                 deltaX_ticks.PushEnd(entity.world.tick);
 
                 while (deltaX_diffs.Count > 0 && !deltaX_diffs.PeekEnd()) {
+                    deltaX_diffs.PopEnd();
                     deltaX_ticks.PopEnd();
                     deltaX_states.PopEnd();
-                    deltaX_diffs.PopEnd();
                 }
             }
         }
@@ -53,10 +54,11 @@ namespace TestServer {
 
             set {
                 if (deltaY_ticks.Count > 0 && deltaY_ticks.PeekEnd() == entity.world.tick) {
-                    deltaY_states.PopEnd();
                     deltaY_ticks.PopEnd();
+                    deltaY_states.PopEnd();
                 }
 
+                deltaY_diffWriter.SetPosition(0);
                 for (int i = 0; i < deltaY_states.Count; ++i) {
                     int index = deltaY_states.Start + i;
                     deltaY_diffs[index] = deltaY_differ.Diff(deltaY_states[index], (System.Int32)value, deltaY_diffWriter);
@@ -66,9 +68,9 @@ namespace TestServer {
                 deltaY_ticks.PushEnd(entity.world.tick);
 
                 while (deltaY_diffs.Count > 0 && !deltaY_diffs.PeekEnd()) {
+                    deltaY_diffs.PopEnd();
                     deltaY_ticks.PopEnd();
                     deltaY_states.PopEnd();
-                    deltaY_diffs.PopEnd();
                 }
             }
         }
