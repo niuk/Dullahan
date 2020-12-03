@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Threading;
 
@@ -49,9 +50,9 @@ namespace Dullahan.Network {
                     while (!cancellationTokenSource.IsCancellationRequested) {
                         try {
                             if (remoteEndPoint.Equals(new IPEndPoint(IPAddress.Any, 0))) {
-                                dtlsTransport = new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport);
-                            } else {
                                 dtlsTransport = new DtlsServerProtocol(new SecureRandom()).Accept(new TlsServerImplementation(), datagramTransport);
+                            } else {
+                                dtlsTransport = new DtlsClientProtocol(new SecureRandom()).Connect(new TlsClientImplementation(), datagramTransport);
                             }
 
                             break;
@@ -72,7 +73,8 @@ namespace Dullahan.Network {
                             }
 
                             //Console.WriteLine($"\tReceived {length} bytes from {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(buffer, 0, length)}");
-                            int header = BufferUtil.ReadInt(buffer, 0);
+                            // always little-endian, whereas BitConverter.ToInt32 depends on the endianness of the machine
+                            int header = new BinaryReader(new MemoryStream(buffer, 0, buffer.Length)).ReadInt32(); 
                             bool isLeftEnd = (header & 0x80000000) != 0;
                             bool isRightEnd = (header & 0x40000000) != 0;
                             int size = (header & 0x3ff00000) >> 20;
@@ -286,7 +288,8 @@ namespace Dullahan.Network {
                     nextNumber = (nextNumber + 1) % 0x000fffff;
                     header |= number;
 
-                    BufferUtil.WriteInt((int)header, dtlsBuffer, 0);
+                    // always little-endian, whereas BitConverter.GetBytes depends on the endianness of the machine
+                    new BinaryWriter(new MemoryStream(dtlsBuffer, 0, dtlsBuffer.Length)).Write((int)header);
                     Array.Copy(buffer, index, dtlsBuffer, 4, fragmentSize);
                     dtlsTransport.Send(dtlsBuffer, 0, 4 + fragmentSize);
                     //Console.WriteLine($"\tSent {HEADER_SIZE + fragmentSize} bytes to {datagramTransport.RemoteEndPoint} via DTLS: {BitConverter.ToString(dtlsBuffer, 0, HEADER_SIZE + fragmentSize)}");

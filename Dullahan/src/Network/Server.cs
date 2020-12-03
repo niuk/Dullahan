@@ -1,28 +1,42 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Net;
 
 namespace Dullahan.Network {
     public class Server<TServerState, TClientState> : IDisposable {
-        public TServerState serverState {
+        public int serverTick {
             set {
                 foreach (var client in clientsByPort.Values) {
-                    client.localState = value;
+                    client.LocalTick = value;
                 }
             }
         }
 
-        public TClientState this[int port] => clientsByPort[port].remoteState;
+        public bool GetClientConnected(int port) {
+            return clientsByPort[port].Connected;
+        }
+
+        public TClientState GetClientState(int port) {
+            int tick = clientsByPort[port].AckingRemoteTick;
+            if (tick >= 0) {
+                clientsByPort[port].RemoteStatesByTick.TryGetValue(tick, out TClientState clientState);
+                return clientState;
+            } else {
+                return default;
+            }
+        }
+
+        public int GetClientTick(int port) {
+            return clientsByPort[port].AckingRemoteTick;
+        }
 
         private readonly Dictionary<int, Client<TServerState, TClientState>> clientsByPort = new Dictionary<int, Client<TServerState, TClientState>>();
         private bool disposedValue;
 
         public Server(
-            Func<BinaryReader, TServerState> readServerState,
-            Action<TClientState, BinaryWriter> writeClientState,
-            IDiffer<(BinaryWriter, TServerState), BinaryReader> serverStateDiffer,
-            IDiffer<(BinaryWriter, TClientState), BinaryReader> clientStateDiffer,
+            IReadOnlyDictionary<int, TServerState> serverStatesByTick,
+            IDiffer<TServerState> serverStateDiffer,
+            IDiffer<TClientState> clientStateDiffer,
             int portStart,
             int capacity,
             TimeSpan sendRate
@@ -31,8 +45,7 @@ namespace Dullahan.Network {
                 // can't use `i` directly because it gets overwritten during iteration
                 int port = portStart + i;
                 clientsByPort.Add(port, new Client<TServerState, TClientState>(
-                    readServerState,
-                    writeClientState,
+                    serverStatesByTick,
                     serverStateDiffer,
                     clientStateDiffer,
                     new IPEndPoint(IPAddress.Any, port),

@@ -1,17 +1,34 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Threading;
 
 namespace Dullahan.Network {
     public class Client<TLocalState, TRemoteState> : IDisposable {
         public bool Connected => connection.Connected;
 
-        public TLocalState localState { private get; set; }
-        private TLocalState lastAckedLocalState;
+        private int localTick = -1;
+        public int LocalTick {
+            set {
+                lock (localTickMutex) {
+                    localTick = value;
+                }
+            }
+        }
 
-        public TRemoteState remoteState { get; private set; }
+        public int AckedLocalTick { get; private set; } = -1;
+        // we use this mutex to guarantee that the localTick, the ackedLocalTick, and the diff we send is consistent in each message (see sendThread)
+        private readonly object localTickMutex = new object();
+
+        public int AckingRemoteTick { get; private set; } = -1;
+
+        public IReadOnlyDictionary<int, TRemoteState> RemoteStatesByTick => remoteStatesByTick;
+        private readonly ConcurrentDictionary<int, TRemoteState> remoteStatesByTick = new ConcurrentDictionary<int, TRemoteState>();
+        // we use a ConcurrentDictionary because the onMessageReceived callback happens in a separate thread
 
         private readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
         private readonly Connection connection;
@@ -19,10 +36,9 @@ namespace Dullahan.Network {
         private bool disposedValue;
 
         public Client(
-            Func<BinaryReader, TLocalState> readLocalState,
-            Action<TRemoteState, BinaryWriter> writeRemoteState,
-            IDiffer<(BinaryWriter, TLocalState), BinaryReader> localStateDiffer,
-            IDiffer<(BinaryWriter, TRemoteState), BinaryReader> remoteStateDiffer,
+            IReadOnlyDictionary<int, TLocalState> localStatesByTick,
+            IDiffer<TLocalState> localStateDiffer,
+            IDiffer<TRemoteState> remoteStateDiffer,
             EndPoint localEndPoint,
             EndPoint remoteEndPoint,
             TimeSpan sendInterval
@@ -31,9 +47,21 @@ namespace Dullahan.Network {
                 localEndPoint,
                 remoteEndPoint,
                 (buffer, index, size) => {
-                    using (var reader = new BinaryReader(new MemoryStream(buffer, index, size, false))) {
-                        lastAckedLocalState = readLocalState(reader);
-                        remoteState = remoteStateDiffer.Patch((null, remoteState), reader).Item2;
+                    using (var reader = new BinaryReader(new MemoryStream(buffer, index, size, writable: false))) {
+                        AckedLocalTick = reader.ReadInt32();
+
+                        int oldRemoteTick = reader.ReadInt32();
+                        int newRemoteTick = reader.ReadInt32();
+
+                        //Console.WriteLine($"Received: ackedLocalTick = {ackedLocalTick}, oldRemoteTick = {oldRemoteTick}, newRemoteTick = {newRemoteTick}, ackingRemoteTick = {ackingRemoteTick}");
+
+                        // only patch remote state if newer
+                        if (AckingRemoteTick < newRemoteTick) {
+                            remoteStatesByTick.TryGetValue(oldRemoteTick, out TRemoteState remoteState);
+                            remoteStateDiffer.Patch(ref remoteState, reader);
+                            remoteStatesByTick.TryAdd(newRemoteTick, remoteState);
+                            AckingRemoteTick = newRemoteTick;
+                        }
                     }
                 });
 
@@ -43,15 +71,31 @@ namespace Dullahan.Network {
                 while (!cancellationTokenSource.IsCancellationRequested) {
                     stopwatch.Restart();
 
-                    memoryStream.Position = 0;
-                    using (var writer = new BinaryWriter(memoryStream)) {
-                        writeRemoteState(remoteState, writer);
-                        localStateDiffer.Diff((writer, localState), (writer, lastAckedLocalState));
-                        if (memoryStream.Position > int.MaxValue) {
-                            throw new OverflowException();
-                        }
+                    if (connection.Connected) {
+                        using (var writer = new BinaryWriter(memoryStream, Encoding.UTF8, leaveOpen: true)) {
+                            writer.Seek(0, SeekOrigin.Begin);
+                            writer.Write(AckingRemoteTick);
 
-                        connection.SendMessage(memoryStream.GetBuffer(), 0, (int)memoryStream.Position);
+                            TLocalState ackedLocalState;
+                            TLocalState localState;
+                            lock (localTickMutex) {
+                                writer.Write(AckedLocalTick);
+                                writer.Write(localTick);
+
+                                //Console.WriteLine($"Sending: ackingRemoteTick = {ackingRemoteTick}, ackedLocalTick = {ackedLocalTick}, localTick = {localTick}");
+
+                                ackedLocalState = AckedLocalTick >= 0 ? localStatesByTick[AckedLocalTick] : default;
+                                localState = localTick >= 0 ? localStatesByTick[localTick] : default;
+                            }
+
+                            localStateDiffer.Diff(ackedLocalState, localState, writer);
+
+                            if (memoryStream.Position > int.MaxValue) {
+                                throw new OverflowException();
+                            }
+
+                            connection.SendMessage(memoryStream.GetBuffer(), 0, (int)memoryStream.Position);
+                        }
                     }
 
                     var elapsed = stopwatch.Elapsed;

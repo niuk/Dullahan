@@ -9,7 +9,8 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace Dullahan {
     public class CodeGen {
-        private static readonly Dictionary<Type, Tuple<Type, Type>> differTypesAndDiffTypesByDiffableType = new Dictionary<Type, Tuple<Type, Type>>();
+        private static readonly Dictionary<string, string> differTypeNameForDiffableTypeName = new Dictionary<string, string>();
+        private static readonly Dictionary<Type, string> componentTypeNameForIComponentType = new Dictionary<Type, string>();
         private static readonly Dictionary<string, Assembly> assembliesByFullName = new Dictionary<string, Assembly>();
 
         public static void Main(string[] args) {
@@ -58,7 +59,7 @@ namespace Dullahan {
                         //Console.WriteLine($"Loading assembly by name: {referencedAssemblyName.FullName}");
                         LoadAssemblyWithReferencedAssemblies(Assembly.Load(referencedAssemblyName));
                     } catch (FileNotFoundException e) {
-                        //Console.Error.WriteLine(e);
+                        Console.Error.WriteLine(e.FileName);
                     }
                 }
             }
@@ -109,53 +110,170 @@ namespace Dullahan {
             // World.cs
             var worldCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using Dullahan;
+using System.Linq;
 
 namespace {@namespace} {{
-    public class World {{
-        public int tick {{ get; private set; }}
+    public class World : IReadOnlyDictionary<int, (World, int)> {{
+        public int tick => ticks.Max;
+        private readonly SortedSet<int> ticks = new SortedSet<int>();
+        public IEnumerable<int> Keys => ticks;
+        public IEnumerable<(World, int)> Values => Keys.Select(key => (this, key));
+        public int Count => ticks.Count;
+        public (World, int) this[int key] => (this, key);
+
+        public bool ContainsKey(int key) {{
+            return ticks.Contains(key);
+        }}
+
+        public bool TryGetValue(int key, out (World, int) value) {{
+            value = (this, key);
+            return ticks.Contains(key);
+        }}
+
+        public IEnumerator<KeyValuePair<int, (World, int)>> GetEnumerator() {{
+            return ticks.Select(key => new KeyValuePair<int, (World, int)>(key, (this, key))).GetEnumerator();
+        }}
+
+        IEnumerator IEnumerable.GetEnumerator() {{
+            return GetEnumerator();
+        }}
 
         public readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
+";
+
+            // WorldDiffer.cs
+            var worldDifferCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using Dullahan;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+
+namespace {@namespace} {{
+    public class WorldDiffer : IDiffer<(World, int)> {{
+        private readonly EntityDiffer entityDiffer = new EntityDiffer();
+";
+
+            // WorldDiffer.Diff
+            var worldDiffCode = $@"
+        public bool Diff((World, int) worldAtOldTick, (World, int) worldAtNewTick, BinaryWriter writer) {{
+            var oldWorld = worldAtOldTick.Item1;
+            var newWorld = worldAtNewTick.Item1;
+            if (oldWorld != null && oldWorld != newWorld) {{
+                throw new InvalidOperationException(""Can only diff the same world at different ticks."");
+            }}
+
+            int oldTick = worldAtOldTick.Item2;
+            int newTick = worldAtNewTick.Item2;
+
+            // reserve room for count of changed entities
+            int startPosition = writer.GetPosition();
+            writer.Write(0);
+            int changedCount = 0;
+            var entitiesById = oldWorld != null ? oldWorld.entitiesById : new Dictionary<Guid, Entity>();
+            var disposed = new HashSet<Guid>();
+            var constructed = new HashSet<Entity>();
+            foreach (var entity in entitiesById.Values) {{
+                if (entity.constructionTick <= oldTick && oldTick < entity.disposalTick) {{
+                    // entity exists in old world
+                    if (entity.constructionTick <= newTick && newTick < entity.disposalTick) {{
+                        // entity also exists in new world
+                        int keyPosition = writer.GetPosition(); // preemptively write the key; erase when entities don't differ
+                        writer.Write(entity.id.ToByteArray());
+                        if (entityDiffer.Diff((entity, oldTick), (entity, newTick), writer)) {{
+                            ++changedCount;
+                        }} else {{
+                            writer.SetPosition(keyPosition);
+                        }}
+                    }} else {{
+                        // entity was disposed
+                        disposed.Add(entity.id);
+                    }}
+                }} else {{
+                    // entity does not exist in old world
+                    if (entity.constructionTick <= newTick && newTick < entity.disposalTick) {{
+                        // entity exists in new world
+                        constructed.Add(entity);
+                    }} else {{
+                        // entity existed at some point but not in either world
+                    }}
+                }}
+            }}
+
+            int savedPosition = writer.GetPosition();
+            writer.SetPosition(startPosition);
+            writer.Write(changedCount);
+            writer.SetPosition(savedPosition);
+
+            writer.Write(disposed.Count);
+            foreach (var id in disposed) {{
+                writer.Write(id.ToByteArray());
+            }}
+
+            writer.Write(constructed.Count);
+            foreach (var entity in constructed) {{
+                entityDiffer.Diff((null, -1), (entity, newTick), writer);
+            }}
+
+            return changedCount > 0 || disposed.Count > 0 || constructed.Count > 0;
+";
+
+            // WorldDiffer.Patch
+            var worldPatchCode = $@"
+        public void Patch(ref (World, int) worldAtTick, BinaryReader reader) {{
 ";
 
             // Entity.cs
             var entityCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using System;
+using System.IO;
+using System.Text;
 using Dullahan;
 
 namespace {@namespace} {{
     public class Entity {{
         public readonly Guid id = Guid.NewGuid();
 
-        public World world {{ get; private set; }}
+        public readonly World world;
+        public readonly int constructionTick;
+        public int disposalTick {{ get; private set; }}
 
         private Entity entity => this;
+";
 
+            var entityConstructorCode = $@"
         public Entity(World world) {{
             this.world = world;
+            constructionTick = world.tick;
+            disposalTick = int.MaxValue;
             world.entitiesById.Add(id, this);
-        }}
 ";
 
             // EntityDiffer.cs
             var entityDifferCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
+using System;
+using System.IO;
 
 namespace {@namespace} {{
-    public class EntityDiffer : IDiffer<(Entity, int), (byte[], int, int)> {{
+    public class EntityDiffer : IDiffer<(Entity, int)> {{
 ";
 
             // EntityDiffer.Diff
             var entityDiffCode = $@"
-        public Maybe<(byte[], int, int)> Diff((Entity, int) left, (Entity, int) right) {{
+        public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {{
+            if (entityAtOldTick.Item1 != entityAtNewTick.Item1) {{
+                throw new InvalidOperationException(""Can only diff the same entity at different ticks."");
+            }}
+
+            return true;
 ";
 
             // EntityDiffer.Patch
             var entityPatchCode = $@"
-        public (Entity, int) Patch((Entity, int) diffable, (byte[], int, int) diff) {{
-            int oldTick = diff.Item1[0] | diff.Item1[1] << 8 | diff.Item1[2] << 16 | diff.Item1[3] << 24;
-            int newTick = diff.Item1[4] | diff.Item1[5] << 8 | diff.Item1[6] << 16 | diff.Item1[7] << 24;
+        public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {{
 ";
 
             // generate system classes first so that we know which systems need to add/remove component tuples when components are added to/removed from entities
@@ -275,10 +393,6 @@ namespace {@namespace} {{
 
             // generate component classes that automatically add themselves to the tuple containers of relevant systems and that keep track of state diffs
             foreach (var type in GetAllTypes()) {
-                if (type.Name.Contains("Component")) {
-                    Console.WriteLine($"{type}: is assignable = {typeof(ECS.IComponent).IsAssignableFrom(type)}, is interface = {type.IsInterface}, isn't IComponent = {type != typeof(ECS.IComponent)}");
-                }
-
                 if (typeof(ECS.IComponent).IsAssignableFrom(type) && type.IsInterface && type != typeof(ECS.IComponent)) {
                     if (!type.Name.StartsWith("I") || !type.Name.EndsWith("Component")) {
                         throw new Exception($"Invalid component interface name {type.Name}: Must start with 'I' and end with \"Component\"!");
@@ -289,21 +403,42 @@ namespace {@namespace} {{
                     var componentTypeName = type.Name.Substring(1);
                     var componentPropertyName = Decapitalize(componentTypeName);
 
-                    Console.WriteLine($"Adding property \"{componentPropertyName}\" to Entity class...");
-                    GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode);
-
                     Console.WriteLine($"Generating component class \"{componentTypeName}\" from \"{type.FullName}\"...");
                     var componentCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
+using System.IO;
+using System.Text;
 
 namespace {@namespace} {{
     public class {componentTypeName} : {type.FullName} {{
         public Entity entity {{ get; private set; }}
+";
+
+                    var componentConstructorCode = $@"
 
         public {componentTypeName}(Entity entity) {{
             this.entity = entity;
             entity.{componentPropertyName} = this;
-        }}
+";
+
+                    // *ComponentDiffer.cs
+                    var componentDifferCode = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
+using Dullahan;
+using System.IO;
+
+namespace {@namespace} {{
+    public class {componentTypeName}Differ : IDiffer<{componentTypeName}> {{
+";
+
+                    // EntityDiffer.Diff
+                    var componentDiffCode = $@"
+        public bool Diff({componentTypeName} oldComponent, {componentTypeName} newComponent, BinaryWriter writer) {{
+            return true;
+";
+
+                    // EntityDiffer.Patch
+                    var componentPatchCode = $@"
+        public void Patch(ref {componentTypeName} component, BinaryReader reader) {{
 ";
 
                     var getters = new HashSet<string>();
@@ -315,7 +450,7 @@ namespace {@namespace} {{
                             var propertyName = methodInfo.Name.Substring(4);
                             getters.Add(propertyName);
                             if (setters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.ReturnType, propertyName, Enumerable.Empty<string>(), ref componentCode);
+                                GenerateStateProperty(methodInfo.ReturnType, propertyName, Enumerable.Empty<string>(), ref componentCode, ref componentConstructorCode);
                             }
                         }
 
@@ -323,22 +458,43 @@ namespace {@namespace} {{
                             var propertyName = methodInfo.Name.Substring(4);
                             setters.Add(propertyName);
                             if (getters.Contains(propertyName)) {
-                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, Enumerable.Empty<string>(), ref componentCode);
+                                GenerateStateProperty(methodInfo.GetParameters()[0].ParameterType, propertyName, Enumerable.Empty<string>(), ref componentCode, ref componentConstructorCode);
                             }
                         }
                     }
 
-                    componentCode += @"
-    }
-}
+                    componentCode += $@"
+{componentConstructorCode}
+        }}
+    }}
+}}
 ";
                     File.WriteAllText(Path.Combine(outputPath, componentTypeName + ".cs"), componentCode);
+
+                    componentDifferCode += $@"
+{componentDiffCode}
+        }}
+{componentPatchCode}
+        }}
+    }}
+}}
+";
+                    File.WriteAllText(Path.Combine(outputPath, $"{componentTypeName}Differ.cs"), componentDifferCode);
+
+                    // GenerateStateProperty for the component field in the entity needs to know what differ type to use
+                    differTypeNameForDiffableTypeName.Add(componentTypeName, $"{componentTypeName}Differ");
+                    componentTypeNameForIComponentType.Add(type, componentTypeName);
+
+                    Console.WriteLine($"Adding property \"{componentPropertyName}\" to Entity class...");
+                    GenerateStateProperty(type, componentPropertyName, systemModificationsForComponentType.TryGetValue(type, out HashSet<string> modifications) ? modifications : Enumerable.Empty<string>(), ref entityCode, ref entityConstructorCode);
                 }
             }
 
-            entityCode += @"
-    }
-}
+            entityCode += $@"
+{entityConstructorCode}
+        }}
+    }}
+}}
 ";
             File.WriteAllText(Path.Combine(outputPath, "Entity.cs"), entityCode);
 
@@ -346,7 +502,6 @@ namespace {@namespace} {{
 {entityDiffCode}
         }}
 {entityPatchCode}
-            return (diffable.Item1, newTick);
         }}
     }}
 }}
@@ -355,7 +510,7 @@ namespace {@namespace} {{
 
             worldCode += @"
         public void Tick() {
-            ++tick;
+            ticks.Add(tick + 1);
 ";
 
             while (systemTypes.Count > 0) {
@@ -398,47 +553,57 @@ namespace {@namespace} {{
 }
 ";
             File.WriteAllText(Path.Combine(outputPath, "World.cs"), worldCode);
+
+            worldDifferCode += $@"
+{worldDiffCode}
+        }}
+{worldPatchCode}
+        }}
+    }}
+}}
+";
+            File.WriteAllText(Path.Combine(outputPath, "WorldDiffer.cs"), worldDifferCode);
         }
 
         private static void GatherDiffers() {
-            Console.WriteLine($"Gathering {typeof(IDiffer<,>)} implementations...");
+            Console.WriteLine($"Gathering {typeof(IDiffer<>)} implementations...");
 
             foreach (var type in GetAllTypes()) {
                 var interfaces = type.GetInterfaces();
                 foreach (var @interface in interfaces) {
-                    if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<,>)) {
-                        Console.WriteLine($"Found {@interface} implementation {type}.");
+                    if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<>)) {
+                        Console.WriteLine($"Found {@interface} implementation {type}. ||{ToExpression(@interface.GetGenericArguments()[0])}||");
                         var genericArguments = @interface.GetGenericArguments();
-                        differTypesAndDiffTypesByDiffableType[genericArguments[0]] = Tuple.Create(type, genericArguments[1]);
+                        differTypeNameForDiffableTypeName[ToExpression(@interface.GetGenericArguments()[0])] = ToExpression(type);
                     }
                 }
             }
         }
 
-        private static void GenerateStateProperty(Type propertyType, string propertyName, IEnumerable<string> onSet, ref string code) {
+        private static void GenerateStateProperty(Type propertyType, string propertyName, IEnumerable<string> onSet, ref string code, ref string constructorCode) {
             Console.WriteLine($"Property: {propertyName}");
 
-            string differTypeName;
-            string diffTypeName;
             var propertyTypeName = ToExpression(propertyType);
-            if (differTypesAndDiffTypesByDiffableType.TryGetValue(propertyType, out Tuple<Type, Type> differTypeAndDiffType)) {
-                differTypeName = ToExpression(differTypeAndDiffType.Item1);
-                diffTypeName = ToExpression(differTypeAndDiffType.Item2);
-            } else if (propertyType.IsClass || propertyType.IsInterface) {
-                differTypeName = $"ReferenceDiffer<{propertyTypeName}>";
-                diffTypeName = propertyTypeName;
-            } else if (propertyType.IsPrimitive) {
-                differTypeName = $"PrimitiveDiffer<{propertyTypeName}>";
-                diffTypeName = propertyTypeName;
-            } else {
-                var diffType = typeof(IDiffer<,>).GetGenericArguments()[1];
-                throw new InvalidProgramException($"No implementation of {typeof(IDiffer<,>).MakeGenericType(propertyType, diffType)} found!");
+
+            if (!componentTypeNameForIComponentType.TryGetValue(propertyType, out string actualTypeName)) {
+                actualTypeName = propertyTypeName;
             }
+
+            if (!differTypeNameForDiffableTypeName.TryGetValue(actualTypeName, out string differTypeName)) {
+                throw new InvalidProgramException($"No implementation of {typeof(IDiffer<>).MakeGenericType(propertyType)} found!");
+            }
+
+            constructorCode += $@"
+            {propertyName}_diffWriter = new BinaryWriter({propertyName}_diffBuffer, Encoding.UTF8, leaveOpen: true);
+";
 
             code += $@"
         private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
-        private readonly Ring<{propertyTypeName}> {propertyName}_states = new Ring<{propertyTypeName}>();
-        private readonly Ring<Maybe<{diffTypeName}>> {propertyName}_diffs = new Ring<Maybe<{diffTypeName}>>();
+        private readonly Ring<{actualTypeName}> {propertyName}_states = new Ring<{actualTypeName}>();
+        private readonly Ring<bool> {propertyName}_diffs = new Ring<bool>();
+        private readonly MemoryStream {propertyName}_diffBuffer = new MemoryStream();
+        private readonly BinaryWriter {propertyName}_diffWriter;
+        private readonly {differTypeName} {propertyName}_differ = new {differTypeName}();
         public {propertyTypeName} {propertyName} {{
             get {{
                 return {propertyName}_states.PeekEnd();
@@ -450,16 +615,15 @@ namespace {@namespace} {{
                     {propertyName}_ticks.PopEnd();
                 }}
 
-                var differ = new {differTypeName}();
                 for (int i = 0; i < {propertyName}_states.Count; ++i) {{
                     int index = {propertyName}_states.Start + i;
-                    {propertyName}_diffs[index] = differ.Diff({propertyName}_states[index], value);
+                    {propertyName}_diffs[index] = {propertyName}_differ.Diff({propertyName}_states[index], ({actualTypeName})value, {propertyName}_diffWriter);
                 }}
 
-                {propertyName}_states.PushEnd(value);
+                {propertyName}_states.PushEnd(({actualTypeName})value);
                 {propertyName}_ticks.PushEnd(entity.world.tick);
 
-                while ({propertyName}_diffs.Count > 0 && {propertyName}_diffs.PeekEnd() == null) {{
+                while ({propertyName}_diffs.Count > 0 && !{propertyName}_diffs.PeekEnd()) {{
                     {propertyName}_ticks.PopEnd();
                     {propertyName}_states.PopEnd();
                     {propertyName}_diffs.PopEnd();
