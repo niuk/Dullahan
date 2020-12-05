@@ -37,10 +37,11 @@ namespace TestServer {
                             Snapshot_deltaX.pool.Add(deltaX_snapshots.PopEnd());
                         }
 
-                        if (!Snapshot_deltaX.pool.TryTake(out Snapshot_deltaX snapshot)) {
-                            snapshot = new Snapshot_deltaX(value);
+                        if (Snapshot_deltaX.pool.TryTake(out Snapshot_deltaX snapshot)) {
                             snapshot.diffs.Clear();
                             snapshot.diffWriter.SetOffset(0);
+                        } else {
+                            snapshot = new Snapshot_deltaX(value);
                         }
 
                         int start = deltaX_ticks.Start + deltaX_ticks.Count - 1;
@@ -90,10 +91,11 @@ namespace TestServer {
                             Snapshot_deltaY.pool.Add(deltaY_snapshots.PopEnd());
                         }
 
-                        if (!Snapshot_deltaY.pool.TryTake(out Snapshot_deltaY snapshot)) {
-                            snapshot = new Snapshot_deltaY(value);
+                        if (Snapshot_deltaY.pool.TryTake(out Snapshot_deltaY snapshot)) {
                             snapshot.diffs.Clear();
                             snapshot.diffWriter.SetOffset(0);
+                        } else {
+                            snapshot = new Snapshot_deltaY(value);
                         }
 
                         int start = deltaY_ticks.Start + deltaY_ticks.Count - 1;

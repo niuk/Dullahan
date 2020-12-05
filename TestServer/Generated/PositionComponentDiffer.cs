@@ -71,7 +71,22 @@ namespace TestServer {
                         return changed;
                     }
 
-                    public void Patch(ref (PositionComponent, int) component, BinaryReader reader) {
+                    public void Patch(ref (PositionComponent, int) componentAtTick, BinaryReader reader) {
+                        var component = componentAtTick.Item1;
+                        byte flag = reader.ReadByte();
+
+                        if ((flag >> 0 & 1) != 0) {
+                            var value = component.x;
+                            Snapshot_x.differ.Patch(ref value, reader);
+                            component.x = value;
+                        }
+
+                        if ((flag >> 1 & 1) != 0) {
+                            var value = component.y;
+                            Snapshot_y.differ.Patch(ref value, reader);
+                            component.y = value;
+                        }
+
                     }
                 }
             }

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Dullahan\Dullahan.csproj" />
+    <ProjectReference Include="..\Generator\Generator.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,7 +27,7 @@
   </ItemGroup>
 
   <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
-    <Exec Command="..\CodeGen\bin\Debug\net5.0\CodeGen.exe generate TestServer Generated Source" />
+    <Exec Command="..\Generator\bin\Debug\net5.0\Generator.exe generate Generated TestServer Source" />
   </Target>
 
 </Project>

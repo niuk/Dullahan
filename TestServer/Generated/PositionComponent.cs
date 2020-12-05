@@ -37,10 +37,11 @@ namespace TestServer {
                             Snapshot_x.pool.Add(x_snapshots.PopEnd());
                         }
 
-                        if (!Snapshot_x.pool.TryTake(out Snapshot_x snapshot)) {
-                            snapshot = new Snapshot_x(value);
+                        if (Snapshot_x.pool.TryTake(out Snapshot_x snapshot)) {
                             snapshot.diffs.Clear();
                             snapshot.diffWriter.SetOffset(0);
+                        } else {
+                            snapshot = new Snapshot_x(value);
                         }
 
                         int start = x_ticks.Start + x_ticks.Count - 1;
@@ -90,10 +91,11 @@ namespace TestServer {
                             Snapshot_y.pool.Add(y_snapshots.PopEnd());
                         }
 
-                        if (!Snapshot_y.pool.TryTake(out Snapshot_y snapshot)) {
-                            snapshot = new Snapshot_y(value);
+                        if (Snapshot_y.pool.TryTake(out Snapshot_y snapshot)) {
                             snapshot.diffs.Clear();
                             snapshot.diffWriter.SetOffset(0);
+                        } else {
+                            snapshot = new Snapshot_y(value);
                         }
 
                         int start = y_ticks.Start + y_ticks.Count - 1;
