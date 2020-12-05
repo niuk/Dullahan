@@ -5,7 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 
 namespace TestServer {
-    public class World : IReadOnlyDictionary<int, (World, int)> {
+    public sealed partial class World : IReadOnlyDictionary<int, (World, int)> {
+        // ticks and ticking
         public int tick => ticks.Max;
         private readonly SortedSet<int> ticks = new SortedSet<int>();
 
@@ -13,6 +14,7 @@ namespace TestServer {
             ticks.Add(tick);
         }
 
+        // IReadonlyDictionary implementation
         public IEnumerable<int> Keys => ticks;
         public IEnumerable<(World, int)> Values => Keys.Select(key => (this, key));
         public int Count => ticks.Count;
@@ -35,20 +37,17 @@ namespace TestServer {
             return GetEnumerator();
         }
 
-        public readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
+        // meat and potatoes
+        private readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
 
-        public readonly TestServer.Source.Systems.InputSystem inputSystem = new InputSystem_Implementation();
+        public readonly TestServer.InputSystem inputSystem = new InputSystem_Implementation();
 
-        public readonly TestServer.Source.Systems.MovementSystem movementSystem = new MovementSystem_Implementation();
+        public readonly TestServer.MovementSystem movementSystem = new MovementSystem_Implementation();
 
         public void Tick() {
             ticks.Add(tick + 1);
 
-            // no mutual dependencies:
-
             inputSystem.Tick();
-
-            // no mutual dependencies:
 
             movementSystem.Tick();
 

@@ -13,7 +13,7 @@ namespace Dullahan {
 
         public bool Diff(IDictionary<TKey, TValue> oldDictionary, IDictionary<TKey, TValue> newDictionary, BinaryWriter writer) {
             // reserve room for changed count
-            int startPosition = writer.GetPosition();
+            int startPosition = writer.GetOffset();
             writer.Write(0);
 
             int changedCount = 0;
@@ -22,22 +22,22 @@ namespace Dullahan {
             foreach (var pair in oldDictionary) {
                 if (newDictionary.TryGetValue(pair.Key, out TValue newValue)) {
                     // preemptively write the key diff; we'll erase it if the value didn't change
-                    int keyPosition = writer.GetPosition();
+                    int keyPosition = writer.GetOffset();
                     keyDiffer.Diff(default, pair.Key, writer);
                     if (valueDiffer.Diff(oldDictionary[pair.Key], newDictionary[pair.Key], writer)) {
                         ++changedCount;
                     } else {
-                        writer.SetPosition(keyPosition);
+                        writer.SetOffset(keyPosition);
                     }
                 } else {
                     removed.Add(pair.Key);
                 }
             }
 
-            int savedPosition = writer.GetPosition();
-            writer.SetPosition(startPosition);
+            int savedPosition = writer.GetOffset();
+            writer.SetOffset(startPosition);
             writer.Write(changedCount);
-            writer.SetPosition(savedPosition);
+            writer.SetOffset(savedPosition);
 
             foreach (var pair in newDictionary) {
                 if (oldDictionary.TryGetValue(pair.Key, out TValue oldValue)) {

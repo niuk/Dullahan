@@ -4,32 +4,40 @@ using System;
 using System.IO;
 
 namespace TestServer {
-    public class EntityDiffer : IDiffer<(Entity, int)> {
+    partial class World {
+        partial class Entity {
+            public sealed class Differ : IDiffer<(Entity, int)> {
+                private readonly InputComponent.Differ inputComponentDiffer = new InputComponent.Differ();
+                private readonly PositionComponent.Differ positionComponentDiffer = new PositionComponent.Differ();
 
-        private readonly InputComponentDiffer inputComponentDiffer = new InputComponentDiffer();
+                public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {
+                    if (entityAtOldTick.Item1 != entityAtNewTick.Item1) {
+                        throw new InvalidOperationException("Can only diff the same entity at different ticks.");
+                    }
 
-        private readonly PositionComponentDiffer positionComponentDiffer = new PositionComponentDiffer();
+                    var entity = entityAtOldTick.Item1;
+                    int oldTick = entityAtOldTick.Item2;
+                    int newTick = entityAtNewTick.Item2;
+
+                    bool anyComponentsChanged = false;
+                    anyComponentsChanged = inputComponentDiffer.Diff(
+                        (entity.inputComponent, oldTick),
+                        (entity.inputComponent, newTick),
+                        writer
+                    ) || anyComponentsChanged;
+                    anyComponentsChanged = positionComponentDiffer.Diff(
+                        (entity.positionComponent, oldTick),
+                        (entity.positionComponent, newTick),
+                        writer
+                    ) || anyComponentsChanged;
+                    return anyComponentsChanged;
+                }
 
 
-        public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {
-            var oldEntity = entityAtOldTick.Item1;
-            var newEntity = entityAtNewTick.Item1;
+                public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {
 
-            if (oldEntity != newEntity) {
-                throw new InvalidOperationException("Can only diff the same entity at different ticks.");
+                }
             }
-
-            int oldTick = entityAtOldTick.Item2;
-            int newTick = entityAtNewTick.Item2;
-
-            inputComponentDiffer.Diff((oldEntity.inputComponent, oldTick), (newEntity.inputComponent, newTick), writer);
-
-            positionComponentDiffer.Diff((oldEntity.positionComponent, oldTick), (newEntity.positionComponent, newTick), writer);
-
-        }
-
-        public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {
-
         }
     }
 }

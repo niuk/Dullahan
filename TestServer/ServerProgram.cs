@@ -12,7 +12,7 @@ namespace TestServer {
             var world = new World();
             var server = new Server<(World, int), byte>(
                 serverStatesByTick: world,
-                serverStateDiffer: new WorldDiffer(),
+                serverStateDiffer: new World.Differ(),
                 clientStateDiffer: new ByteDiffer(),
                 portStart: portStart,
                 capacity: capacity,

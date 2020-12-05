@@ -4,14 +4,18 @@ using System.Collections.Generic;
 
 namespace Dullahan {
     public class Ring<T> : IEnumerable<T> {
-        private int bufferStart = 0;
-        private T[] buffer = new T[1];
+        public int bufferStart = 0;
+        public T[] buffer = new T[1];
 
         public int Start { get; private set; } = 0;
 
         public int Count { get; private set; } = 0;
 
-        public int End => Start + Count - 1;
+        public void Clear() {
+            bufferStart = 0;
+            Start = 0;
+            Count = 0;
+        }
 
         public T PeekStart() {
             if (Count > 0) {
@@ -52,6 +56,10 @@ namespace Dullahan {
         }
 
         public void PushStart(T item) {
+            if (Start == 0) {
+                throw new IndexOutOfRangeException();
+            }
+
             EnsureSize();
             bufferStart = bufferStart > 0 ? bufferStart - 1 : buffer.Length - 1;
             buffer[bufferStart] = item;
@@ -96,6 +104,35 @@ namespace Dullahan {
                 } else {
                     throw new IndexOutOfRangeException();
                 }
+            }
+        }
+
+        public int BinarySearch(T item) {
+            if (!typeof(IComparable<T>).IsAssignableFrom(typeof(T))) {
+                throw new InvalidOperationException($"{typeof(T)} must implement {typeof(IComparable<T>)}");
+            }
+
+            return BinarySearch(item, Comparer<T>.Default);
+        }
+
+        public int BinarySearch(T item, IComparer<T> comparer) {
+            int length = Math.Min(buffer.Length - bufferStart, Count);
+            int result = Array.BinarySearch(buffer, bufferStart, length, item, comparer);
+            if (result >= 0) {
+                return Start + result - bufferStart;
+            }
+
+            if (~result < bufferStart + length) {
+                return ~(Start + ~result - bufferStart);
+            }
+
+            // item is greater than all elements in range
+            int searchStart = (bufferStart + length) % buffer.Length;
+            result = Array.BinarySearch(buffer, searchStart, Count - length, item, comparer);
+            if (result < 0) {
+                return ~(Start + length + ~result - searchStart);
+            } else {
+                return Start + length + result - searchStart;
             }
         }
 

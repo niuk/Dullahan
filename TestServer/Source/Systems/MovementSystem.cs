@@ -1,12 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using TestServer.Source.Components;
+﻿using System.Collections.Generic;
 using Dullahan.ECS;
 
-namespace TestServer.Source.Systems {
+namespace TestServer {
     [TickAfter(typeof(InputSystem))]
     public abstract class MovementSystem : ISystem {
-        protected abstract IEnumerable<Tuple<IInputComponent, IPositionComponent>> controllables { get; }
+        protected abstract IEnumerable<(IInputComponent, IPositionComponent)> controllables { get; }
 
         public virtual void Tick() {
             foreach (var (inputComponent, positionComponent) in controllables) {

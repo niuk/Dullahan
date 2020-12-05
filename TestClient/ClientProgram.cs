@@ -14,7 +14,7 @@ namespace TestClient {
             var client = new Client<byte, (TestServer.World, int)>(
                 localStatesByTick: deltasByTick,
                 localStateDiffer: new ByteDiffer(),
-                remoteStateDiffer: new TestServer.WorldDiffer(),
+                remoteStateDiffer: new TestServer.World.Differ(),
                 localEndPoint: new IPEndPoint(IPAddress.Any, 0),
                 remoteEndPoint: new IPEndPoint(IPAddress.Parse(args[0]), int.Parse(args[1])),
                 TimeSpan.FromSeconds(0.1));
