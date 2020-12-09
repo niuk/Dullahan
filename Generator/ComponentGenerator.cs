@@ -41,14 +41,13 @@ namespace {@namespace} {{
             public sealed partial class {componentTypeName} : {IComponentType.FullName} {{
                 public readonly Entity entity;
                 public readonly int constructionTick;
-";
+                public int disposalTick {{ get; private set; }}
 
-            var constructor = $@"
                 public {componentTypeName}(Entity entity) {{
                     this.entity = entity;
                     constructionTick = entity.world.tick;
+                    disposalTick = int.MaxValue;
                     entity.{componentTypeName.Decapitalize()} = this;
-                    entity.{componentTypeName.Decapitalize()}_disposalTick = int.MaxValue;
 ";
 
             // add attached entity to system's observer collection
@@ -59,13 +58,13 @@ namespace {@namespace} {{
                             Where(observedIComponentType => observedIComponentType != IComponentType).
                             Select(observedIComponentType => $"entity.{observedIComponentType.Name[1..].Decapitalize()} != null"));
                         if (!string.IsNullOrEmpty(condition)) {
-                            constructor += $@"
+                            component += $@"
                     if ({condition}) {{
                         (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Add(entity);
                     }}
 ";
                         } else {
-                            constructor += $@"
+                            component += $@"
                     (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Add(entity);
 ";
                         }
@@ -73,26 +72,15 @@ namespace {@namespace} {{
                 }
             }
 
-            var disposer = $@"
-                private void Dispose(bool disposing) {{
-                    if (entity.{componentTypeName.Decapitalize()}_disposalTick == int.MaxValue) {{
-                        if (disposing) {{";
+            component += @"
+                }
+";
 
             foreach (var (propertyType, propertyName) in IComponentType.GetComponentProperties()) {
-                Console.WriteLine($"Property: {propertyName}");
-
                 var propertyTypeName = propertyType.ToExpression();
 
                 if (!differTypeNameForDiffableTypeName.TryGetValue(propertyTypeName, out string differTypeName)) {
                     throw new InvalidProgramException($"No implementation of {typeof(IDiffer<>).MakeGenericType(propertyType)} found!");
-                }
-
-                if (propertyType.IsAssignableTo(typeof(IDisposable))) {
-                    disposer += $@"
-                            foreach (var state in {propertyName}_states) {{
-                                state.Dispose();
-                            }}
-";
                 }
 
                 component += $@"
@@ -100,7 +88,9 @@ namespace {@namespace} {{
                     public static readonly ConcurrentBag<Snapshot_{propertyName}> pool = new ConcurrentBag<Snapshot_{propertyName}>();
                     public static readonly {differTypeName} differ = new {differTypeName}();
 
-                    public readonly Ring<(int, int)> diffs = new Ring<(int, int)>();
+                    // diffTicks and diffEnds form an associative array
+                    public readonly Ring<int> diffTicks = new Ring<int>();
+                    public readonly Ring<int> diffOffsets = new Ring<int>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public {propertyTypeName} state;
 
@@ -109,6 +99,7 @@ namespace {@namespace} {{
                     }}
                 }}
 
+                // {propertyName}_ticks and {propertyName}_snapshots form an associative array
                 private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
                 private readonly Ring<Snapshot_{propertyName}> {propertyName}_snapshots = new Ring<Snapshot_{propertyName}>();
                 public {propertyTypeName} {propertyName} {{
@@ -117,13 +108,15 @@ namespace {@namespace} {{
                     }}
 
                     set {{
-                        if ({propertyName}_snapshots.Count > 0 && {propertyName}_ticks.PeekEnd() == entity.world.tick) {{
+                        int tick = entity.world.tick;
+                        if ({propertyName}_snapshots.Count > 0 && {propertyName}_ticks.PeekEnd() == tick) {{
                             {propertyName}_ticks.PopEnd();
                             Snapshot_{propertyName}.pool.Add({propertyName}_snapshots.PopEnd());
                         }}
 
                         if (Snapshot_{propertyName}.pool.TryTake(out Snapshot_{propertyName} snapshot)) {{
-                            snapshot.diffs.Clear();
+                            snapshot.diffTicks.Clear();
+                            snapshot.diffOffsets.Clear();
                             snapshot.diffWriter.SetOffset(0);
                         }} else {{
                             snapshot = new Snapshot_{propertyName}(value);
@@ -142,35 +135,47 @@ namespace {@namespace} {{
                                 snapshot.diffWriter.SetOffset(savedOffset);
                             }}
 
-                            snapshot.diffs.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+                            snapshot.diffTicks.PushEnd(tick - {propertyName}_ticks[i]);
+                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
                         }}
 
-                        {propertyName}_ticks.PushEnd(entity.world.tick);
+                        {propertyName}_ticks.PushEnd(tick);
                         {propertyName}_snapshots.PushEnd(snapshot);
                     }}
                 }}
 ";
             }
 
-            constructor += @"
-                }
-";
+            component += $@"
+                private void Dispose(bool disposing) {{
+                    if (entity.{componentTypeName.Decapitalize()}_disposalTick == int.MaxValue) {{
+                        if (disposing) {{";
 
             // remove attached entity from relevant system's observed collection
             foreach (var systemType in Generator.GetSystemTypes()) {
                 foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
                     if (observedIComponentTypes.Contains(IComponentType)) {
-                        disposer += $@"
+                        component += $@"
                             (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Remove(entity);";
                     }
                 }
             }
 
-            disposer += $@"
+            foreach (var (propertyType, propertyName) in IComponentType.GetComponentProperties()) {
+                if (propertyType.IsAssignableTo(typeof(IDisposable))) {
+                    component += $@"
+                            foreach (var state in {propertyName}_states) {{
+                                state?.Dispose();
+                            }}
+";
+                }
+            }
+
+            component += $@"
                         }}
 
                         entity.{componentTypeName.Decapitalize()} = null;
-                        entity.{componentTypeName.Decapitalize()}_disposalTick = entity.world.tick;
+                        disposalTick = entity.world.tick;
                     }}
                 }}
 
@@ -181,8 +186,6 @@ namespace {@namespace} {{
                 }}
 ";
             component += $@"
-{constructor}
-{disposer}
             }}
         }}
     }}
@@ -212,34 +215,48 @@ namespace {@namespace} {{
                         var component = componentAtOldTick.Item1;
                         int oldTick = componentAtOldTick.Item2;
                         int newTick = componentAtNewTick.Item2;
-                        bool changed = false;
+                        writer.Write(oldTick);
+                        writer.Write(newTick);
 
                         // reserve room
-                        byte flag = 0;
-                        int flagOffset = writer.GetOffset();
-                        writer.Write(flag);
+                        byte dirtyFlags = 0;
+                        int dirtyFlagsOffset = writer.GetOffset();
+                        writer.Write(dirtyFlags);
 ";
 
             int propertyIndex = 0;
             foreach (var (propertyType, propertyName) in GetComponentProperties(IComponentType)) {
                 componentDiffer += $@"
                         /* {propertyName} */ {{
-                            int oldIndex = component.{propertyName}_ticks.BinarySearch(oldTick);
-                            if (oldIndex < 0) {{
-                                oldIndex = ~oldIndex - 1;
+                            int snapshotIndex = component.{propertyName}_ticks.BinarySearch(newTick);
+                            if (snapshotIndex < 0) {{
+                                snapshotIndex = ~snapshotIndex - 1;
                             }}
 
-                            int newIndex = component.{propertyName}_ticks.BinarySearch(newTick);
-                            if (newIndex < 0) {{
-                                newIndex = ~newIndex - 1;
+                            if (snapshotIndex < 0) {{
+                                throw new InvalidOperationException($""Tick {{newTick}} is too old to diff."");
                             }}
 
-                            var snapshot = component.{propertyName}_snapshots[newIndex];
-                            (int index, int count) = snapshot.diffs[newIndex - oldIndex];
-                            if (count > 0) {{
-                                changed = true;
-                                writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), index, count);
-                                flag |= 1 << {propertyIndex++};
+                            int snapshotTick = component.{propertyName}_ticks[snapshotIndex];
+                            int diffTick = snapshotTick - oldTick;
+                            if (diffTick > 0) {{
+                                var snapshot = component.{propertyName}_snapshots[snapshotIndex];
+
+                                int diffIndex = snapshot.diffTicks.BinarySearch(diffTick);
+                                if (diffIndex < 0) {{
+                                    diffIndex = ~diffIndex;
+                                }}
+
+                                if (diffIndex == snapshot.diffTicks.Count) {{
+                                    throw new InvalidOperationException(""Tick {{oldTick}} is too old to diff."");
+                                }}
+
+                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
+                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                if (size > 0) {{
+                                    writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
+                                    dirtyFlags |= 1 << {propertyIndex++};
+                                }}
                             }}
                         }}
 ";
@@ -247,22 +264,29 @@ namespace {@namespace} {{
 
             componentDiffer += $@"
                         int savedOffset = writer.GetOffset();
-                        writer.SetOffset(flagOffset);
-                        writer.Write(flag);
+                        writer.SetOffset(dirtyFlagsOffset);
+                        writer.Write(dirtyFlags);
                         writer.SetOffset(savedOffset);
 
-                        return changed;
+                        return dirtyFlags != 0;
                     }}
 
                     public void Patch(ref ({componentTypeName}, int) componentAtTick, BinaryReader reader) {{
                         var component = componentAtTick.Item1;
-                        byte flag = reader.ReadByte();
+                        var tick = componentAtTick.Item2;
+                        var oldTick = reader.ReadInt32();
+                        var newTick = reader.ReadInt32();
+                        if (tick != oldTick) {{
+                            throw new InvalidOperationException($""Component is at tick {{tick}} but patch is from tick {{oldTick}} to {{newTick}}."");
+                        }}
+
+                        byte dirtyFlags = reader.ReadByte();
 ";
 
-            int componentIndex = 0;
+            propertyIndex = 0;
             foreach (var (propertyType, propertyName) in GetComponentProperties(IComponentType)) {
                 componentDiffer += $@"
-                        if ((flag >> {componentIndex++} & 1) != 0) {{
+                        if ((dirtyFlags >> {propertyIndex++} & 1) != 0) {{
                             var value = component.{propertyName};
                             Snapshot_{propertyName}.differ.Patch(ref value, reader);
                             component.{propertyName} = value;
@@ -271,6 +295,7 @@ namespace {@namespace} {{
             }
 
             componentDiffer += @"
+                        componentAtTick.Item2 = newTick;
                     }
                 }
             }

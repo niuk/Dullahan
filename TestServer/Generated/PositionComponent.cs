@@ -10,12 +10,27 @@ namespace TestServer {
             public sealed partial class PositionComponent : TestServer.IPositionComponent {
                 public readonly Entity entity;
                 public readonly int constructionTick;
+                public int disposalTick { get; private set; }
+
+                public PositionComponent(Entity entity) {
+                    this.entity = entity;
+                    constructionTick = entity.world.tick;
+                    disposalTick = int.MaxValue;
+                    entity.positionComponent = this;
+
+                    if (entity.inputComponent != null) {
+                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
+                    }
+
+                }
 
                 private class Snapshot_x {
                     public static readonly ConcurrentBag<Snapshot_x> pool = new ConcurrentBag<Snapshot_x>();
                     public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
 
-                    public readonly Ring<(int, int)> diffs = new Ring<(int, int)>();
+                    // diffTicks and diffEnds form an associative array
+                    public readonly Ring<int> diffTicks = new Ring<int>();
+                    public readonly Ring<int> diffOffsets = new Ring<int>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -24,6 +39,7 @@ namespace TestServer {
                     }
                 }
 
+                // x_ticks and x_snapshots form an associative array
                 private readonly Ring<int> x_ticks = new Ring<int>();
                 private readonly Ring<Snapshot_x> x_snapshots = new Ring<Snapshot_x>();
                 public System.Int32 x {
@@ -32,13 +48,15 @@ namespace TestServer {
                     }
 
                     set {
-                        if (x_snapshots.Count > 0 && x_ticks.PeekEnd() == entity.world.tick) {
+                        int tick = entity.world.tick;
+                        if (x_snapshots.Count > 0 && x_ticks.PeekEnd() == tick) {
                             x_ticks.PopEnd();
                             Snapshot_x.pool.Add(x_snapshots.PopEnd());
                         }
 
                         if (Snapshot_x.pool.TryTake(out Snapshot_x snapshot)) {
-                            snapshot.diffs.Clear();
+                            snapshot.diffTicks.Clear();
+                            snapshot.diffOffsets.Clear();
                             snapshot.diffWriter.SetOffset(0);
                         } else {
                             snapshot = new Snapshot_x(value);
@@ -57,10 +75,11 @@ namespace TestServer {
                                 snapshot.diffWriter.SetOffset(savedOffset);
                             }
 
-                            snapshot.diffs.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+                            snapshot.diffTicks.PushEnd(tick - x_ticks[i]);
+                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
                         }
 
-                        x_ticks.PushEnd(entity.world.tick);
+                        x_ticks.PushEnd(tick);
                         x_snapshots.PushEnd(snapshot);
                     }
                 }
@@ -69,7 +88,9 @@ namespace TestServer {
                     public static readonly ConcurrentBag<Snapshot_y> pool = new ConcurrentBag<Snapshot_y>();
                     public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
 
-                    public readonly Ring<(int, int)> diffs = new Ring<(int, int)>();
+                    // diffTicks and diffEnds form an associative array
+                    public readonly Ring<int> diffTicks = new Ring<int>();
+                    public readonly Ring<int> diffOffsets = new Ring<int>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -78,6 +99,7 @@ namespace TestServer {
                     }
                 }
 
+                // y_ticks and y_snapshots form an associative array
                 private readonly Ring<int> y_ticks = new Ring<int>();
                 private readonly Ring<Snapshot_y> y_snapshots = new Ring<Snapshot_y>();
                 public System.Int32 y {
@@ -86,13 +108,15 @@ namespace TestServer {
                     }
 
                     set {
-                        if (y_snapshots.Count > 0 && y_ticks.PeekEnd() == entity.world.tick) {
+                        int tick = entity.world.tick;
+                        if (y_snapshots.Count > 0 && y_ticks.PeekEnd() == tick) {
                             y_ticks.PopEnd();
                             Snapshot_y.pool.Add(y_snapshots.PopEnd());
                         }
 
                         if (Snapshot_y.pool.TryTake(out Snapshot_y snapshot)) {
-                            snapshot.diffs.Clear();
+                            snapshot.diffTicks.Clear();
+                            snapshot.diffOffsets.Clear();
                             snapshot.diffWriter.SetOffset(0);
                         } else {
                             snapshot = new Snapshot_y(value);
@@ -111,27 +135,14 @@ namespace TestServer {
                                 snapshot.diffWriter.SetOffset(savedOffset);
                             }
 
-                            snapshot.diffs.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+                            snapshot.diffTicks.PushEnd(tick - y_ticks[i]);
+                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
                         }
 
-                        y_ticks.PushEnd(entity.world.tick);
+                        y_ticks.PushEnd(tick);
                         y_snapshots.PushEnd(snapshot);
                     }
                 }
-
-
-                public PositionComponent(Entity entity) {
-                    this.entity = entity;
-                    constructionTick = entity.world.tick;
-                    entity.positionComponent = this;
-                    entity.positionComponent_disposalTick = int.MaxValue;
-
-                    if (entity.inputComponent != null) {
-                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
-                    }
-
-                }
-
 
                 private void Dispose(bool disposing) {
                     if (entity.positionComponent_disposalTick == int.MaxValue) {
@@ -140,7 +151,7 @@ namespace TestServer {
                         }
 
                         entity.positionComponent = null;
-                        entity.positionComponent_disposalTick = entity.world.tick;
+                        disposalTick = entity.world.tick;
                     }
                 }
 

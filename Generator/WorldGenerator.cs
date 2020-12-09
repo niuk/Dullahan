@@ -140,16 +140,16 @@ namespace {@namespace} {{
                 int oldTick = worldAtOldTick.Item2;
                 int newTick = worldAtNewTick.Item2;
 
-                writer.Write(newTick - oldTick);
+                writer.Write(oldTick);
+                writer.Write(newTick);
 
                 // reserve room for count of changed entities
                 int startOffset = writer.GetOffset();
                 writer.Write(0);
                 int changedCount = 0;
-                var entitiesById = world != null ? world.entitiesById : new Dictionary<Guid, Entity>();
                 var disposed = new HashSet<Guid>();
                 var constructed = new HashSet<Entity>();
-                foreach (var entity in entitiesById.Values) {{
+                foreach (var entity in world.entitiesById.Values) {{
                     if (entity.constructionTick <= oldTick && oldTick < entity.disposalTick) {{
                         // entity exists in old world
                         if (entity.constructionTick <= newTick && newTick < entity.disposalTick) {{
@@ -188,7 +188,7 @@ namespace {@namespace} {{
 
                 writer.Write(constructed.Count);
                 foreach (var entity in constructed) {{
-                    entityDiffer.Diff((null, -1), (entity, newTick), writer);
+                    entityDiffer.Diff((default, oldTick), (entity, newTick), writer);
                 }}
 
                 return changedCount > 0 || disposed.Count > 0 || constructed.Count > 0;
@@ -198,8 +198,13 @@ namespace {@namespace} {{
                 var world = worldAtTick.Item1;
                 var tick = worldAtTick.Item2;
 
-                int deltaTick = reader.ReadInt32();
-                world.AddTick(world.tick + deltaTick);
+                int oldTick = reader.ReadInt32();
+                int newTick = reader.ReadInt32();
+                if (tick != oldTick) {{
+                    throw new InvalidOperationException($""World is at tick {{tick}} but patch is from tick {{oldTick}} to {{newTick}}."");
+                }}
+
+                world.AddTick(newTick);
 
                 int changedCount = reader.ReadInt32();
                 for (int i = 0; i < changedCount; ++i) {{
@@ -216,11 +221,11 @@ namespace {@namespace} {{
 
                 int constructedCount = reader.ReadInt32();
                 for (int i = 0; i < constructedCount; ++i) {{
-                    var id = new Guid(reader.ReadBytes(16));
-                    var entityAtTick = (default(Entity), tick);
+                    var entityAtTick = (new Entity(world, new Guid(reader.ReadBytes(16))), tick);
                     entityDiffer.Patch(ref entityAtTick, reader);
-                    world.entitiesById.Add(id, entityAtTick.Item1);
                 }}
+
+                worldAtTick.Item2 = newTick;
             }}
         }}
     }}

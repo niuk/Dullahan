@@ -10,12 +10,29 @@ namespace TestServer {
             public sealed partial class InputComponent : TestServer.IInputComponent {
                 public readonly Entity entity;
                 public readonly int constructionTick;
+                public int disposalTick { get; private set; }
+
+                public InputComponent(Entity entity) {
+                    this.entity = entity;
+                    constructionTick = entity.world.tick;
+                    disposalTick = int.MaxValue;
+                    entity.inputComponent = this;
+
+                    ((InputSystem_Implementation)entity.world.inputSystem).inputComponents_collection.Add(entity);
+
+                    if (entity.positionComponent != null) {
+                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
+                    }
+
+                }
 
                 private class Snapshot_deltaX {
                     public static readonly ConcurrentBag<Snapshot_deltaX> pool = new ConcurrentBag<Snapshot_deltaX>();
                     public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
 
-                    public readonly Ring<(int, int)> diffs = new Ring<(int, int)>();
+                    // diffTicks and diffEnds form an associative array
+                    public readonly Ring<int> diffTicks = new Ring<int>();
+                    public readonly Ring<int> diffOffsets = new Ring<int>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -24,6 +41,7 @@ namespace TestServer {
                     }
                 }
 
+                // deltaX_ticks and deltaX_snapshots form an associative array
                 private readonly Ring<int> deltaX_ticks = new Ring<int>();
                 private readonly Ring<Snapshot_deltaX> deltaX_snapshots = new Ring<Snapshot_deltaX>();
                 public System.Int32 deltaX {
@@ -32,13 +50,15 @@ namespace TestServer {
                     }
 
                     set {
-                        if (deltaX_snapshots.Count > 0 && deltaX_ticks.PeekEnd() == entity.world.tick) {
+                        int tick = entity.world.tick;
+                        if (deltaX_snapshots.Count > 0 && deltaX_ticks.PeekEnd() == tick) {
                             deltaX_ticks.PopEnd();
                             Snapshot_deltaX.pool.Add(deltaX_snapshots.PopEnd());
                         }
 
                         if (Snapshot_deltaX.pool.TryTake(out Snapshot_deltaX snapshot)) {
-                            snapshot.diffs.Clear();
+                            snapshot.diffTicks.Clear();
+                            snapshot.diffOffsets.Clear();
                             snapshot.diffWriter.SetOffset(0);
                         } else {
                             snapshot = new Snapshot_deltaX(value);
@@ -57,10 +77,11 @@ namespace TestServer {
                                 snapshot.diffWriter.SetOffset(savedOffset);
                             }
 
-                            snapshot.diffs.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+                            snapshot.diffTicks.PushEnd(tick - deltaX_ticks[i]);
+                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
                         }
 
-                        deltaX_ticks.PushEnd(entity.world.tick);
+                        deltaX_ticks.PushEnd(tick);
                         deltaX_snapshots.PushEnd(snapshot);
                     }
                 }
@@ -69,7 +90,9 @@ namespace TestServer {
                     public static readonly ConcurrentBag<Snapshot_deltaY> pool = new ConcurrentBag<Snapshot_deltaY>();
                     public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
 
-                    public readonly Ring<(int, int)> diffs = new Ring<(int, int)>();
+                    // diffTicks and diffEnds form an associative array
+                    public readonly Ring<int> diffTicks = new Ring<int>();
+                    public readonly Ring<int> diffOffsets = new Ring<int>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -78,6 +101,7 @@ namespace TestServer {
                     }
                 }
 
+                // deltaY_ticks and deltaY_snapshots form an associative array
                 private readonly Ring<int> deltaY_ticks = new Ring<int>();
                 private readonly Ring<Snapshot_deltaY> deltaY_snapshots = new Ring<Snapshot_deltaY>();
                 public System.Int32 deltaY {
@@ -86,13 +110,15 @@ namespace TestServer {
                     }
 
                     set {
-                        if (deltaY_snapshots.Count > 0 && deltaY_ticks.PeekEnd() == entity.world.tick) {
+                        int tick = entity.world.tick;
+                        if (deltaY_snapshots.Count > 0 && deltaY_ticks.PeekEnd() == tick) {
                             deltaY_ticks.PopEnd();
                             Snapshot_deltaY.pool.Add(deltaY_snapshots.PopEnd());
                         }
 
                         if (Snapshot_deltaY.pool.TryTake(out Snapshot_deltaY snapshot)) {
-                            snapshot.diffs.Clear();
+                            snapshot.diffTicks.Clear();
+                            snapshot.diffOffsets.Clear();
                             snapshot.diffWriter.SetOffset(0);
                         } else {
                             snapshot = new Snapshot_deltaY(value);
@@ -111,29 +137,14 @@ namespace TestServer {
                                 snapshot.diffWriter.SetOffset(savedOffset);
                             }
 
-                            snapshot.diffs.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+                            snapshot.diffTicks.PushEnd(tick - deltaY_ticks[i]);
+                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
                         }
 
-                        deltaY_ticks.PushEnd(entity.world.tick);
+                        deltaY_ticks.PushEnd(tick);
                         deltaY_snapshots.PushEnd(snapshot);
                     }
                 }
-
-
-                public InputComponent(Entity entity) {
-                    this.entity = entity;
-                    constructionTick = entity.world.tick;
-                    entity.inputComponent = this;
-                    entity.inputComponent_disposalTick = int.MaxValue;
-
-                    ((InputSystem_Implementation)entity.world.inputSystem).inputComponents_collection.Add(entity);
-
-                    if (entity.positionComponent != null) {
-                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
-                    }
-
-                }
-
 
                 private void Dispose(bool disposing) {
                     if (entity.inputComponent_disposalTick == int.MaxValue) {
@@ -143,7 +154,7 @@ namespace TestServer {
                         }
 
                         entity.inputComponent = null;
-                        entity.inputComponent_disposalTick = entity.world.tick;
+                        disposalTick = entity.world.tick;
                     }
                 }
 

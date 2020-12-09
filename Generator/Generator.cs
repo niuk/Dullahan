@@ -81,7 +81,7 @@ namespace Dullahan.Generator {
                 EntityGenerator.GenerateEntity(@namespace));
             File.WriteAllText(
                 Path.Combine(outputDirectory, "EntityDiffer.cs"),
-                EntityGenerator.GenerateEntityDiffer(@namespace, differTypeNameForDiffableTypeName));
+                EntityGenerator.GenerateEntityDiffer(@namespace));
 
             foreach (var systemType in GetSystemTypes()) {
                 File.WriteAllText(

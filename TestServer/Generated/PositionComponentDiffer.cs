@@ -16,77 +16,112 @@ namespace TestServer {
                         var component = componentAtOldTick.Item1;
                         int oldTick = componentAtOldTick.Item2;
                         int newTick = componentAtNewTick.Item2;
-                        bool changed = false;
+                        writer.Write(oldTick);
+                        writer.Write(newTick);
 
                         // reserve room
-                        byte flag = 0;
-                        int flagOffset = writer.GetOffset();
-                        writer.Write(flag);
+                        byte dirtyFlags = 0;
+                        int dirtyFlagsOffset = writer.GetOffset();
+                        writer.Write(dirtyFlags);
 
                         /* x */ {
-                            int oldIndex = component.x_ticks.BinarySearch(oldTick);
-                            if (oldIndex < 0) {
-                                oldIndex = ~oldIndex - 1;
+                            int snapshotIndex = component.x_ticks.BinarySearch(newTick);
+                            if (snapshotIndex < 0) {
+                                snapshotIndex = ~snapshotIndex - 1;
                             }
 
-                            int newIndex = component.x_ticks.BinarySearch(newTick);
-                            if (newIndex < 0) {
-                                newIndex = ~newIndex - 1;
+                            if (snapshotIndex < 0) {
+                                throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
                             }
 
-                            var snapshot = component.x_snapshots[newIndex];
-                            (int index, int count) = snapshot.diffs[newIndex - oldIndex];
-                            if (count > 0) {
-                                changed = true;
-                                writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), index, count);
-                                flag |= 1 << 0;
+                            int snapshotTick = component.x_ticks[snapshotIndex];
+                            int diffTick = snapshotTick - oldTick;
+                            if (diffTick > 0) {
+                                var snapshot = component.x_snapshots[snapshotIndex];
+
+                                int diffIndex = snapshot.diffTicks.BinarySearch(diffTick);
+                                if (diffIndex < 0) {
+                                    diffIndex = ~diffIndex;
+                                }
+
+                                if (diffIndex == snapshot.diffTicks.Count) {
+                                    throw new InvalidOperationException("Tick {oldTick} is too old to diff.");
+                                }
+
+                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
+                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                if (size > 0) {
+                                    writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
+                                    dirtyFlags |= 1 << 0;
+                                }
                             }
                         }
 
                         /* y */ {
-                            int oldIndex = component.y_ticks.BinarySearch(oldTick);
-                            if (oldIndex < 0) {
-                                oldIndex = ~oldIndex - 1;
+                            int snapshotIndex = component.y_ticks.BinarySearch(newTick);
+                            if (snapshotIndex < 0) {
+                                snapshotIndex = ~snapshotIndex - 1;
                             }
 
-                            int newIndex = component.y_ticks.BinarySearch(newTick);
-                            if (newIndex < 0) {
-                                newIndex = ~newIndex - 1;
+                            if (snapshotIndex < 0) {
+                                throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
                             }
 
-                            var snapshot = component.y_snapshots[newIndex];
-                            (int index, int count) = snapshot.diffs[newIndex - oldIndex];
-                            if (count > 0) {
-                                changed = true;
-                                writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), index, count);
-                                flag |= 1 << 1;
+                            int snapshotTick = component.y_ticks[snapshotIndex];
+                            int diffTick = snapshotTick - oldTick;
+                            if (diffTick > 0) {
+                                var snapshot = component.y_snapshots[snapshotIndex];
+
+                                int diffIndex = snapshot.diffTicks.BinarySearch(diffTick);
+                                if (diffIndex < 0) {
+                                    diffIndex = ~diffIndex;
+                                }
+
+                                if (diffIndex == snapshot.diffTicks.Count) {
+                                    throw new InvalidOperationException("Tick {oldTick} is too old to diff.");
+                                }
+
+                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
+                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                if (size > 0) {
+                                    writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
+                                    dirtyFlags |= 1 << 1;
+                                }
                             }
                         }
 
                         int savedOffset = writer.GetOffset();
-                        writer.SetOffset(flagOffset);
-                        writer.Write(flag);
+                        writer.SetOffset(dirtyFlagsOffset);
+                        writer.Write(dirtyFlags);
                         writer.SetOffset(savedOffset);
 
-                        return changed;
+                        return dirtyFlags != 0;
                     }
 
                     public void Patch(ref (PositionComponent, int) componentAtTick, BinaryReader reader) {
                         var component = componentAtTick.Item1;
-                        byte flag = reader.ReadByte();
+                        var tick = componentAtTick.Item2;
+                        var oldTick = reader.ReadInt32();
+                        var newTick = reader.ReadInt32();
+                        if (tick != oldTick) {
+                            throw new InvalidOperationException($"Component is at tick {tick} but patch is from tick {oldTick} to {newTick}.");
+                        }
 
-                        if ((flag >> 0 & 1) != 0) {
+                        byte dirtyFlags = reader.ReadByte();
+
+                        if ((dirtyFlags >> 0 & 1) != 0) {
                             var value = component.x;
                             Snapshot_x.differ.Patch(ref value, reader);
                             component.x = value;
                         }
 
-                        if ((flag >> 1 & 1) != 0) {
+                        if ((dirtyFlags >> 1 & 1) != 0) {
                             var value = component.y;
                             Snapshot_y.differ.Patch(ref value, reader);
                             component.y = value;
                         }
 
+                        componentAtTick.Item2 = newTick;
                     }
                 }
             }
