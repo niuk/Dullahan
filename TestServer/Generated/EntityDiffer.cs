@@ -3,22 +3,31 @@ using Dullahan;
 using System;
 using System.IO;
 
-namespace TestServer {
+namespace TestGame {
     partial class World {
         partial class Entity {
             public sealed class Differ : IDiffer<(Entity, int)> {
                 private readonly InputComponent.Differ inputComponentDiffer = new InputComponent.Differ();
                 private readonly PositionComponent.Differ positionComponentDiffer = new PositionComponent.Differ();
                 public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {
-                    if (entityAtOldTick.Item1 != entityAtNewTick.Item1) {
-                        throw new InvalidOperationException("Can only diff the same entity at different ticks.");
-                    }
-
                     var entity = entityAtOldTick.Item1;
+                    if (entity == null) {{
+                        entity = entityAtNewTick.Item1;
+                        if (entity == null) {{
+                            throw new InvalidOperationException("Cannot diff two null entities.");
+                        }}
+                    }} else {{
+                        if (entity != entityAtNewTick.Item1) {{
+                            throw new InvalidOperationException("Can only diff the same entity at different ticks.");
+                        }}
+                    }}
+
                     int oldTick = entityAtOldTick.Item2;
                     int newTick = entityAtNewTick.Item2;
                     writer.Write(oldTick);
+                    Console.WriteLine($"{nameof(oldTick)} -> {writer.GetOffset()}");
                     writer.Write(newTick);
+                    Console.WriteLine($"{nameof(newTick)} -> {writer.GetOffset()}");
 
                     byte dirtyFlags = 0;
                     byte deleteFlags = 0;
@@ -27,28 +36,34 @@ namespace TestServer {
                     writer.Write(dirtyFlags);
                     writer.Write(createFlags);
                     writer.Write(deleteFlags);
+                    Console.WriteLine($"flags -> {writer.GetOffset()}");
 
-                    /* inputComponent */ {
+                    /* inputComponent */
+                    {
+                        InputComponent oldSnapshot;
                         int oldSnapshotIndex = entity.inputComponent_ticks.BinarySearch(oldTick);
                         if (oldSnapshotIndex < 0) {
                             oldSnapshotIndex = ~oldSnapshotIndex - 1;
                         }
 
                         if (oldSnapshotIndex < 0) {
-                            throw new InvalidOperationException($"Tick {oldTick} is too old to diff.");
+                            oldSnapshot = default;
+                        } else {
+                            oldSnapshot = entity.inputComponent_snapshots[oldSnapshotIndex];
                         }
 
+                        InputComponent newSnapshot;
                         int newSnapshotIndex = entity.inputComponent_ticks.BinarySearch(newTick);
                         if (newSnapshotIndex < 0) {
                             newSnapshotIndex = ~newSnapshotIndex - 1;
                         }
 
                         if (newSnapshotIndex < 0) {
-                            throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
+                            newSnapshot = default;
+                        } else {
+                            newSnapshot = entity.inputComponent_snapshots[newSnapshotIndex];
                         }
 
-                        var oldSnapshot = entity.inputComponent_snapshots[oldSnapshotIndex];
-                        var newSnapshot = entity.inputComponent_snapshots[newSnapshotIndex];
                         if (oldSnapshot != null) {
                             if (newSnapshot != null) {
                                 int componentOffset = writer.GetOffset();
@@ -71,26 +86,30 @@ namespace TestServer {
                     }
 
                     /* positionComponent */ {
+                        PositionComponent oldSnapshot;
                         int oldSnapshotIndex = entity.positionComponent_ticks.BinarySearch(oldTick);
                         if (oldSnapshotIndex < 0) {
                             oldSnapshotIndex = ~oldSnapshotIndex - 1;
                         }
 
                         if (oldSnapshotIndex < 0) {
-                            throw new InvalidOperationException($"Tick {oldTick} is too old to diff.");
+                            oldSnapshot = default;
+                        } else {
+                            oldSnapshot = entity.positionComponent_snapshots[oldSnapshotIndex];
                         }
 
+                        PositionComponent newSnapshot;
                         int newSnapshotIndex = entity.positionComponent_ticks.BinarySearch(newTick);
                         if (newSnapshotIndex < 0) {
                             newSnapshotIndex = ~newSnapshotIndex - 1;
                         }
 
                         if (newSnapshotIndex < 0) {
-                            throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
+                            newSnapshot = default;
+                        } else {
+                            newSnapshot = entity.positionComponent_snapshots[newSnapshotIndex];
                         }
 
-                        var oldSnapshot = entity.positionComponent_snapshots[oldSnapshotIndex];
-                        var newSnapshot = entity.positionComponent_snapshots[newSnapshotIndex];
                         if (oldSnapshot != null) {
                             if (newSnapshot != null) {
                                 int componentOffset = writer.GetOffset();
@@ -124,17 +143,23 @@ namespace TestServer {
 
                 public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {
                     var entity = entityAtTick.Item1;
-                    int tick = entityAtTick.Item2;
+                    if (entity == null) {{
+                        entity = new Entity();
+                    }}
 
+                    int tick = entityAtTick.Item2;
                     int oldTick = reader.ReadInt32();
+                    Console.WriteLine($"\t{nameof(oldTick)} -> {reader.GetOffset()}");
                     int newTick = reader.ReadInt32();
+                    Console.WriteLine($"\t{nameof(newTick)} -> {reader.GetOffset()}");
                     if (tick != oldTick) {
-                            throw new InvalidOperationException($"Entity is at tick {tick} but patch is from tick {oldTick} to {newTick}.");
+                        throw new InvalidOperationException($"Entity is at tick {tick} but patch is from tick {oldTick} to {newTick}.");
                     }
 
                     byte dirtyFlags = reader.ReadByte();
                     byte createFlags = reader.ReadByte();
                     byte deleteFlags = reader.ReadByte();
+                    Console.WriteLine($"\tflags -> {reader.GetOffset()}");
 
                     if ((dirtyFlags >> 0 & 1) != 0) {
                         var tuple = (entity.inputComponent, tick);

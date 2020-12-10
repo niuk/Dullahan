@@ -4,21 +4,19 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
 
-namespace TestServer {
+namespace TestGame {
     partial class World {
         partial class Entity {
-            public sealed partial class InputComponent : TestServer.IInputComponent {
+            public sealed partial class InputComponent : TestGame.IInputComponent {
                 public readonly Entity entity;
                 public readonly int constructionTick;
                 public int disposalTick { get; private set; }
 
                 public InputComponent(Entity entity) {
                     this.entity = entity;
-                    constructionTick = entity.world.tick;
+                    constructionTick = entity.world.nextTick;
                     disposalTick = int.MaxValue;
                     entity.inputComponent = this;
-
-                    ((InputSystem_Implementation)entity.world.inputSystem).inputComponents_collection.Add(entity);
 
                     if (entity.positionComponent != null) {
                         ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
@@ -32,7 +30,7 @@ namespace TestServer {
 
                     // diffTicks and diffEnds form an associative array
                     public readonly Ring<int> diffTicks = new Ring<int>();
-                    public readonly Ring<int> diffOffsets = new Ring<int>();
+                    public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -46,27 +44,45 @@ namespace TestServer {
                 private readonly Ring<Snapshot_deltaX> deltaX_snapshots = new Ring<Snapshot_deltaX>();
                 public System.Int32 deltaX {
                     get {
-                        return deltaX_snapshots.PeekEnd().state;
+                        if (deltaX_ticks.Count == 0) {
+                            return default;
+                        }
+
+                        int index = deltaX_ticks.BinarySearch(entity.world.previousTick);
+                        if (index < 0) {
+                            return deltaX_snapshots[~index - 1].state;
+                        } else {
+                            return deltaX_snapshots[index].state;
+                        }
                     }
 
                     set {
-                        int tick = entity.world.tick;
-                        if (deltaX_snapshots.Count > 0 && deltaX_ticks.PeekEnd() == tick) {
-                            deltaX_ticks.PopEnd();
-                            Snapshot_deltaX.pool.Add(deltaX_snapshots.PopEnd());
-                        }
+                        Snapshot_deltaX snapshot;
 
-                        if (Snapshot_deltaX.pool.TryTake(out Snapshot_deltaX snapshot)) {
-                            snapshot.diffTicks.Clear();
-                            snapshot.diffOffsets.Clear();
-                            snapshot.diffWriter.SetOffset(0);
+                        int tick = entity.world.nextTick;
+                        int index = deltaX_ticks.BinarySearch(tick);
+                        if (index < 0) {
+                            if (!Snapshot_deltaX.pool.TryTake(out snapshot)) {
+                                snapshot = new Snapshot_deltaX(value);
+                            }
                         } else {
-                            snapshot = new Snapshot_deltaX(value);
+                            snapshot = deltaX_snapshots[index];
+                            deltaX_snapshots.RemoveAt(index);
                         }
 
-                        int start = deltaX_ticks.Start + deltaX_ticks.Count - 1;
+                        snapshot.diffTicks.Clear();
+                        snapshot.diffSpans.Clear();
+                        snapshot.diffWriter.SetOffset(0);
+
+                        if (index < 0) {
+                            index = ~index;
+                        }
+
+                        // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
+                        int savedOffset;
+                        int start = index - 1;
                         for (int i = start; i >= deltaX_ticks.Start; --i) {
-                            int savedOffset = snapshot.diffWriter.GetOffset();
+                            savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_deltaX.differ.Diff(deltaX_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {
                                 if (i == start) {
                                     // value didn't change
@@ -78,11 +94,38 @@ namespace TestServer {
                             }
 
                             snapshot.diffTicks.PushEnd(tick - deltaX_ticks[i]);
-                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
+                            snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }
 
-                        deltaX_ticks.PushEnd(tick);
-                        deltaX_snapshots.PushEnd(snapshot);
+                        // diff with tick 0
+                        savedOffset = snapshot.diffWriter.GetOffset();
+                        if (!Snapshot_deltaX.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {
+                            snapshot.diffWriter.SetOffset(savedOffset);
+                        }
+
+                        snapshot.diffTicks.PushEnd(tick);
+                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+
+                        deltaX_ticks.Insert(index, tick);
+                        deltaX_snapshots.Insert(index, snapshot);
+
+                        // now that we have a new or modified snapshot, later snapshots need to diff with it
+                        for (int i = index + 1; i < deltaX_ticks.End; ++i) {
+                            savedOffset = deltaX_snapshots[i].diffWriter.GetOffset();
+                            if (!Snapshot_deltaX.differ.Diff(snapshot.state, deltaX_snapshots[i].state, deltaX_snapshots[i].diffWriter)) {
+                                deltaX_snapshots[i].diffWriter.SetOffset(savedOffset);
+                            }
+
+                            int diffTick = deltaX_ticks[i] - tick;
+                            var diffSpan = (savedOffset, deltaX_snapshots[i].diffWriter.GetOffset() - savedOffset);
+                            int diffIndex = deltaX_snapshots[i].diffTicks.BinarySearch(diffTick);
+                            if (diffIndex < 0) {
+                                deltaX_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
+                                deltaX_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
+                            } else {
+                                deltaX_snapshots[i].diffSpans[diffIndex] = diffSpan;
+                            }
+                        }
                     }
                 }
 
@@ -92,7 +135,7 @@ namespace TestServer {
 
                     // diffTicks and diffEnds form an associative array
                     public readonly Ring<int> diffTicks = new Ring<int>();
-                    public readonly Ring<int> diffOffsets = new Ring<int>();
+                    public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public System.Int32 state;
 
@@ -106,27 +149,45 @@ namespace TestServer {
                 private readonly Ring<Snapshot_deltaY> deltaY_snapshots = new Ring<Snapshot_deltaY>();
                 public System.Int32 deltaY {
                     get {
-                        return deltaY_snapshots.PeekEnd().state;
+                        if (deltaY_ticks.Count == 0) {
+                            return default;
+                        }
+
+                        int index = deltaY_ticks.BinarySearch(entity.world.previousTick);
+                        if (index < 0) {
+                            return deltaY_snapshots[~index - 1].state;
+                        } else {
+                            return deltaY_snapshots[index].state;
+                        }
                     }
 
                     set {
-                        int tick = entity.world.tick;
-                        if (deltaY_snapshots.Count > 0 && deltaY_ticks.PeekEnd() == tick) {
-                            deltaY_ticks.PopEnd();
-                            Snapshot_deltaY.pool.Add(deltaY_snapshots.PopEnd());
-                        }
+                        Snapshot_deltaY snapshot;
 
-                        if (Snapshot_deltaY.pool.TryTake(out Snapshot_deltaY snapshot)) {
-                            snapshot.diffTicks.Clear();
-                            snapshot.diffOffsets.Clear();
-                            snapshot.diffWriter.SetOffset(0);
+                        int tick = entity.world.nextTick;
+                        int index = deltaY_ticks.BinarySearch(tick);
+                        if (index < 0) {
+                            if (!Snapshot_deltaY.pool.TryTake(out snapshot)) {
+                                snapshot = new Snapshot_deltaY(value);
+                            }
                         } else {
-                            snapshot = new Snapshot_deltaY(value);
+                            snapshot = deltaY_snapshots[index];
+                            deltaY_snapshots.RemoveAt(index);
                         }
 
-                        int start = deltaY_ticks.Start + deltaY_ticks.Count - 1;
+                        snapshot.diffTicks.Clear();
+                        snapshot.diffSpans.Clear();
+                        snapshot.diffWriter.SetOffset(0);
+
+                        if (index < 0) {
+                            index = ~index;
+                        }
+
+                        // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
+                        int savedOffset;
+                        int start = index - 1;
                         for (int i = start; i >= deltaY_ticks.Start; --i) {
-                            int savedOffset = snapshot.diffWriter.GetOffset();
+                            savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_deltaY.differ.Diff(deltaY_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {
                                 if (i == start) {
                                     // value didn't change
@@ -138,23 +199,49 @@ namespace TestServer {
                             }
 
                             snapshot.diffTicks.PushEnd(tick - deltaY_ticks[i]);
-                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
+                            snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }
 
-                        deltaY_ticks.PushEnd(tick);
-                        deltaY_snapshots.PushEnd(snapshot);
+                        // diff with tick 0
+                        savedOffset = snapshot.diffWriter.GetOffset();
+                        if (!Snapshot_deltaY.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {
+                            snapshot.diffWriter.SetOffset(savedOffset);
+                        }
+
+                        snapshot.diffTicks.PushEnd(tick);
+                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+
+                        deltaY_ticks.Insert(index, tick);
+                        deltaY_snapshots.Insert(index, snapshot);
+
+                        // now that we have a new or modified snapshot, later snapshots need to diff with it
+                        for (int i = index + 1; i < deltaY_ticks.End; ++i) {
+                            savedOffset = deltaY_snapshots[i].diffWriter.GetOffset();
+                            if (!Snapshot_deltaY.differ.Diff(snapshot.state, deltaY_snapshots[i].state, deltaY_snapshots[i].diffWriter)) {
+                                deltaY_snapshots[i].diffWriter.SetOffset(savedOffset);
+                            }
+
+                            int diffTick = deltaY_ticks[i] - tick;
+                            var diffSpan = (savedOffset, deltaY_snapshots[i].diffWriter.GetOffset() - savedOffset);
+                            int diffIndex = deltaY_snapshots[i].diffTicks.BinarySearch(diffTick);
+                            if (diffIndex < 0) {
+                                deltaY_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
+                                deltaY_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
+                            } else {
+                                deltaY_snapshots[i].diffSpans[diffIndex] = diffSpan;
+                            }
+                        }
                     }
                 }
 
                 private void Dispose(bool disposing) {
-                    if (entity.inputComponent_disposalTick == int.MaxValue) {
+                    if (disposalTick == int.MaxValue) {
                         if (disposing) {
-                            ((InputSystem_Implementation)entity.world.inputSystem).inputComponents_collection.Remove(entity);
                             ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Remove(entity);
                         }
 
                         entity.inputComponent = null;
-                        disposalTick = entity.world.tick;
+                        disposalTick = entity.world.nextTick;
                     }
                 }
 

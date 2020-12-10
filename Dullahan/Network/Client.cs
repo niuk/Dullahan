@@ -11,7 +11,7 @@ namespace Dullahan.Network {
     public class Client<TLocalState, TRemoteState> : IDisposable {
         public bool Connected => connection.Connected;
 
-        private int localTick = -1;
+        private int localTick = 0;
         public int LocalTick {
             set {
                 lock (localTickMutex) {
@@ -20,11 +20,11 @@ namespace Dullahan.Network {
             }
         }
 
-        public int AckedLocalTick { get; private set; } = -1;
+        public int AckedLocalTick { get; private set; }
         // we use this mutex to guarantee that the localTick, the ackedLocalTick, and the diff we send is consistent in each message (see sendThread)
         private readonly object localTickMutex = new object();
 
-        public int AckingRemoteTick { get; private set; } = -1;
+        public int AckingRemoteTick { get; private set; }
 
         public IReadOnlyDictionary<int, TRemoteState> RemoteStatesByTick => remoteStatesByTick;
         private readonly ConcurrentDictionary<int, TRemoteState> remoteStatesByTick = new ConcurrentDictionary<int, TRemoteState>();
@@ -47,11 +47,15 @@ namespace Dullahan.Network {
                 localEndPoint,
                 remoteEndPoint,
                 (buffer, index, size) => {
+                    Console.WriteLine($"\tReceived {size} bytes in a message from {remoteEndPoint}.");
                     using (var reader = new BinaryReader(new MemoryStream(buffer, index, size, writable: false))) {
                         AckedLocalTick = reader.ReadInt32();
+                        Console.WriteLine($"\t{nameof(AckingRemoteTick)} -> {reader.GetOffset()}");
 
                         int oldRemoteTick = reader.ReadInt32();
+                        Console.WriteLine($"\t{nameof(oldRemoteTick)} -> {reader.GetOffset()}");
                         int newRemoteTick = reader.ReadInt32();
+                        Console.WriteLine($"\t{nameof(newRemoteTick)} -> {reader.GetOffset()}");
 
                         //Console.WriteLine($"Received: ackedLocalTick = {ackedLocalTick}, oldRemoteTick = {oldRemoteTick}, newRemoteTick = {newRemoteTick}, ackingRemoteTick = {ackingRemoteTick}");
 
@@ -59,6 +63,7 @@ namespace Dullahan.Network {
                         if (AckingRemoteTick < newRemoteTick) {
                             remoteStatesByTick.TryGetValue(oldRemoteTick, out TRemoteState remoteState);
                             remoteStateDiffer.Patch(ref remoteState, reader);
+                            Console.WriteLine($"\t{nameof(remoteStateDiffer)} -> {reader.GetOffset()}");
                             remoteStatesByTick.TryAdd(newRemoteTick, remoteState);
                             AckingRemoteTick = newRemoteTick;
                         }
@@ -73,28 +78,33 @@ namespace Dullahan.Network {
 
                     if (connection.Connected) {
                         using (var writer = new BinaryWriter(memoryStream, Encoding.UTF8, leaveOpen: true)) {
-                            writer.Seek(0, SeekOrigin.Begin);
+                            writer.SetOffset(0);
                             writer.Write(AckingRemoteTick);
+                            Console.WriteLine($"{nameof(AckingRemoteTick)} -> {writer.GetOffset()}");
 
                             TLocalState ackedLocalState;
                             TLocalState localState;
                             lock (localTickMutex) {
                                 writer.Write(AckedLocalTick);
+                                Console.WriteLine($"{nameof(AckedLocalTick)} -> {writer.GetOffset()}");
                                 writer.Write(localTick);
+                                Console.WriteLine($"{nameof(localTick)} -> {writer.GetOffset()}");
 
                                 //Console.WriteLine($"Sending: ackingRemoteTick = {ackingRemoteTick}, ackedLocalTick = {ackedLocalTick}, localTick = {localTick}");
 
-                                ackedLocalState = AckedLocalTick >= 0 ? localStatesByTick[AckedLocalTick] : default;
-                                localState = localTick >= 0 ? localStatesByTick[localTick] : default;
+                                ackedLocalState = localStatesByTick[AckedLocalTick];
+                                localState = localStatesByTick[localTick];
                             }
 
                             localStateDiffer.Diff(ackedLocalState, localState, writer);
+                            Console.WriteLine($"{nameof(localStateDiffer)} -> {writer.GetOffset()}");
 
                             if (memoryStream.Position > int.MaxValue) {
                                 throw new OverflowException();
                             }
 
-                            connection.SendMessage(memoryStream.GetBuffer(), 0, (int)memoryStream.Position);
+                            connection.SendMessage(memoryStream.GetBuffer(), 0, writer.GetOffset());
+                            Console.WriteLine($"Sent {writer.GetOffset()} bytes in a message to {remoteEndPoint}.");
                         }
                     }
 

@@ -11,6 +11,8 @@ namespace Dullahan {
 
         public int Count { get; private set; } = 0;
 
+        public int End => Start + Count;
+
         public void Clear() {
             bufferStart = 0;
             Start = 0;
@@ -73,6 +75,40 @@ namespace Dullahan {
             ++Count;
         }
 
+        public void Insert(int index, T item) {
+            if (Start <= index && index < End) {
+                EnsureSize();
+                int sourceIndex = (bufferStart + (index - Start)) % buffer.Length;
+                int destinationIndex = (sourceIndex + 1) % buffer.Length;
+                int tail = End - index;
+                int length = Math.Min(tail, Math.Min(buffer.Length - sourceIndex, buffer.Length - destinationIndex));
+                Array.Copy(buffer, sourceIndex, buffer, destinationIndex, length);
+                Array.Copy(buffer, (sourceIndex + length) % buffer.Length, buffer, (destinationIndex + length) % buffer.Length, tail - length);
+                buffer[sourceIndex] = item;
+                ++Count;
+            } else if (index == Start - 1) {
+                PushStart(item);
+            } else if (index == End) {
+                PushEnd(item);
+            } else {
+                throw new IndexOutOfRangeException();
+            }
+        }
+
+        public void RemoveAt(int index) {
+            if (index < Start || End <= index) {
+                throw new IndexOutOfRangeException();
+            }
+
+            int destinationIndex = (bufferStart + (index - Start)) % buffer.Length;
+            int sourceIndex = (destinationIndex + 1) % buffer.Length;
+            int tail = End - index - 1;
+            int length = Math.Min(tail, Math.Min(buffer.Length - sourceIndex, buffer.Length - destinationIndex));
+            Array.Copy(buffer, sourceIndex, buffer, destinationIndex, length);
+            Array.Copy(buffer, (sourceIndex + length) % buffer.Length, buffer, (destinationIndex + length) % buffer.Length, tail - length);
+            --Count;
+        }
+
         private void EnsureSize() {
             if (Count == buffer.Length) {
                 var newBuffer = new T[buffer.Length * 2];
@@ -87,7 +123,7 @@ namespace Dullahan {
 
         public T this[int index] {
             get {
-                if (Start <= index && index < Start + Count) {
+                if (Start <= index && index < End) {
                     return buffer[(bufferStart + (index - Start)) % buffer.Length];
                 } else {
                     throw new IndexOutOfRangeException();
@@ -95,12 +131,12 @@ namespace Dullahan {
             }
 
             set {
-                if (Start <= index && index < Start + Count) {
+                if (Start <= index && index < End) {
                     buffer[(bufferStart + (index - Start)) % buffer.Length] = value;
-                } else if (index == Start + Count) {
-                    PushEnd(value);
                 } else if (index == Start - 1) {
                     PushStart(value);
+                } else if (index == End) {
+                    PushEnd(value);
                 } else {
                     throw new IndexOutOfRangeException();
                 }

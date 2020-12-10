@@ -1,8 +1,7 @@
 ﻿using System.Collections.Generic;
 using Dullahan.ECS;
 
-namespace TestServer {
-    [TickAfter(typeof(InputSystem))]
+namespace TestGame {
     public abstract class MovementSystem : ISystem {
         protected abstract IEnumerable<(IInputComponent, IPositionComponent)> controllables { get; }
 

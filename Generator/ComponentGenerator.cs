@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 
+using static Dullahan.Generator.Generator;
+
 namespace Dullahan.Generator {
     static class ComponentGenerator {
         private static IEnumerable<(Type, string)> GetComponentProperties(this Type IComponentType) {
@@ -45,13 +47,13 @@ namespace {@namespace} {{
 
                 public {componentTypeName}(Entity entity) {{
                     this.entity = entity;
-                    constructionTick = entity.world.tick;
+                    constructionTick = entity.world.nextTick;
                     disposalTick = int.MaxValue;
                     entity.{componentTypeName.Decapitalize()} = this;
 ";
 
             // add attached entity to system's observer collection
-            foreach (var systemType in Generator.GetSystemTypes()) {
+            foreach (var systemType in GetSystemTypes()) {
                 foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
                     if (observedIComponentTypes.Contains(IComponentType)) {
                         var condition = string.Join(" && ", observedIComponentTypes.
@@ -90,7 +92,7 @@ namespace {@namespace} {{
 
                     // diffTicks and diffEnds form an associative array
                     public readonly Ring<int> diffTicks = new Ring<int>();
-                    public readonly Ring<int> diffOffsets = new Ring<int>();
+                    public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
                     public {propertyTypeName} state;
 
@@ -104,27 +106,45 @@ namespace {@namespace} {{
                 private readonly Ring<Snapshot_{propertyName}> {propertyName}_snapshots = new Ring<Snapshot_{propertyName}>();
                 public {propertyTypeName} {propertyName} {{
                     get {{
-                        return {propertyName}_snapshots.PeekEnd().state;
+                        if ({propertyName}_ticks.Count == 0) {{
+                            return default;
+                        }}
+
+                        int index = {propertyName}_ticks.BinarySearch(entity.world.previousTick);
+                        if (index < 0) {{
+                            return {propertyName}_snapshots[~index - 1].state;
+                        }} else {{
+                            return {propertyName}_snapshots[index].state;
+                        }}
                     }}
 
                     set {{
-                        int tick = entity.world.tick;
-                        if ({propertyName}_snapshots.Count > 0 && {propertyName}_ticks.PeekEnd() == tick) {{
-                            {propertyName}_ticks.PopEnd();
-                            Snapshot_{propertyName}.pool.Add({propertyName}_snapshots.PopEnd());
-                        }}
+                        Snapshot_{propertyName} snapshot;
 
-                        if (Snapshot_{propertyName}.pool.TryTake(out Snapshot_{propertyName} snapshot)) {{
-                            snapshot.diffTicks.Clear();
-                            snapshot.diffOffsets.Clear();
-                            snapshot.diffWriter.SetOffset(0);
+                        int tick = entity.world.nextTick;
+                        int index = {propertyName}_ticks.BinarySearch(tick);
+                        if (index < 0) {{
+                            if (!Snapshot_{propertyName}.pool.TryTake(out snapshot)) {{
+                                snapshot = new Snapshot_{propertyName}(value);
+                            }}
                         }} else {{
-                            snapshot = new Snapshot_{propertyName}(value);
+                            snapshot = {propertyName}_snapshots[index];
+                            {propertyName}_snapshots.RemoveAt(index);
                         }}
 
-                        int start = {propertyName}_ticks.Start + {propertyName}_ticks.Count - 1;
+                        snapshot.diffTicks.Clear();
+                        snapshot.diffSpans.Clear();
+                        snapshot.diffWriter.SetOffset(0);
+
+                        if (index < 0) {{
+                            index = ~index;
+                        }}
+
+                        // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
+                        int savedOffset;
+                        int start = index - 1;
                         for (int i = start; i >= {propertyName}_ticks.Start; --i) {{
-                            int savedOffset = snapshot.diffWriter.GetOffset();
+                            savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_{propertyName}.differ.Diff({propertyName}_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {{
                                 if (i == start) {{
                                     // value didn't change
@@ -136,11 +156,38 @@ namespace {@namespace} {{
                             }}
 
                             snapshot.diffTicks.PushEnd(tick - {propertyName}_ticks[i]);
-                            snapshot.diffOffsets.PushEnd(snapshot.diffWriter.GetOffset());
+                            snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }}
 
-                        {propertyName}_ticks.PushEnd(tick);
-                        {propertyName}_snapshots.PushEnd(snapshot);
+                        // diff with tick 0
+                        savedOffset = snapshot.diffWriter.GetOffset();
+                        if (!Snapshot_{propertyName}.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {{
+                            snapshot.diffWriter.SetOffset(savedOffset);
+                        }}
+
+                        snapshot.diffTicks.PushEnd(tick);
+                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
+
+                        {propertyName}_ticks.Insert(index, tick);
+                        {propertyName}_snapshots.Insert(index, snapshot);
+
+                        // now that we have a new or modified snapshot, later snapshots need to diff with it
+                        for (int i = index + 1; i < {propertyName}_ticks.End; ++i) {{
+                            savedOffset = {propertyName}_snapshots[i].diffWriter.GetOffset();
+                            if (!Snapshot_{propertyName}.differ.Diff(snapshot.state, {propertyName}_snapshots[i].state, {propertyName}_snapshots[i].diffWriter)) {{
+                                {propertyName}_snapshots[i].diffWriter.SetOffset(savedOffset);
+                            }}
+
+                            int diffTick = {propertyName}_ticks[i] - tick;
+                            var diffSpan = (savedOffset, {propertyName}_snapshots[i].diffWriter.GetOffset() - savedOffset);
+                            int diffIndex = {propertyName}_snapshots[i].diffTicks.BinarySearch(diffTick);
+                            if (diffIndex < 0) {{
+                                {propertyName}_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
+                                {propertyName}_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
+                            }} else {{
+                                {propertyName}_snapshots[i].diffSpans[diffIndex] = diffSpan;
+                            }}
+                        }}
                     }}
                 }}
 ";
@@ -148,11 +195,11 @@ namespace {@namespace} {{
 
             component += $@"
                 private void Dispose(bool disposing) {{
-                    if (entity.{componentTypeName.Decapitalize()}_disposalTick == int.MaxValue) {{
+                    if (disposalTick == int.MaxValue) {{
                         if (disposing) {{";
 
             // remove attached entity from relevant system's observed collection
-            foreach (var systemType in Generator.GetSystemTypes()) {
+            foreach (var systemType in GetSystemTypes()) {
                 foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
                     if (observedIComponentTypes.Contains(IComponentType)) {
                         component += $@"
@@ -175,7 +222,7 @@ namespace {@namespace} {{
                         }}
 
                         entity.{componentTypeName.Decapitalize()} = null;
-                        disposalTick = entity.world.tick;
+                        disposalTick = entity.world.nextTick;
                     }}
                 }}
 
@@ -208,11 +255,18 @@ namespace {@namespace} {{
             partial class {componentTypeName} {{
                 public class Differ : IDiffer<({componentTypeName}, int)> {{
                     public bool Diff(({componentTypeName}, int) componentAtOldTick, ({componentTypeName}, int) componentAtNewTick, BinaryWriter writer) {{
-                        if (componentAtOldTick.Item1 != componentAtNewTick.Item1) {{
-                            throw new InvalidOperationException(""Can only diff the same component at different ticks."");
+                        var component = componentAtOldTick.Item1;
+                        if (component == null) {{
+                            component = componentAtNewTick.Item1;
+                            if (component == null) {{
+                                throw new InvalidOperationException(""Cannot diff two null components."");
+                            }}
+                        }} else {{
+                            if (component != componentAtNewTick.Item1) {{
+                                throw new InvalidOperationException(""Can only diff the same component at different ticks."");
+                            }}
                         }}
 
-                        var component = componentAtOldTick.Item1;
                         int oldTick = componentAtOldTick.Item2;
                         int newTick = componentAtNewTick.Item2;
                         writer.Write(oldTick);
@@ -251,8 +305,7 @@ namespace {@namespace} {{
                                     throw new InvalidOperationException(""Tick {{oldTick}} is too old to diff."");
                                 }}
 
-                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
-                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                var (offset, size) = snapshot.diffSpans[diffIndex];
                                 if (size > 0) {{
                                     writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
                                     dirtyFlags |= 1 << {propertyIndex++};

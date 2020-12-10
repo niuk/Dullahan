@@ -2,12 +2,12 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace TestServer {
+namespace TestGame {
     partial class World {
-        public sealed class MovementSystem_Implementation : TestServer.MovementSystem {
+        public sealed class MovementSystem_Implementation : TestGame.MovementSystem {
 
             public readonly HashSet<Entity> controllables_collection = new HashSet<Entity>();
-            protected override IEnumerable<(TestServer.IInputComponent, TestServer.IPositionComponent)> controllables => controllables_collection.Select(entity => ((TestServer.IInputComponent)entity.inputComponent, (TestServer.IPositionComponent)entity.positionComponent));
+            protected override IEnumerable<(TestGame.IInputComponent, TestGame.IPositionComponent)> controllables => controllables_collection.Select(entity => ((TestGame.IInputComponent)entity.inputComponent, (TestGame.IPositionComponent)entity.positionComponent));
 
         }
     }

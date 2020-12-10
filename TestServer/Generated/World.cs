@@ -4,14 +4,15 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace TestServer {
-    public sealed partial class World : IReadOnlyDictionary<int, (World, int)> {
+namespace TestGame {
+    public sealed partial class World : IReadOnlyDictionary<int, (World, int)>, TestGame.IClientWorld, TestGame.IServerWorld {
         // ticks and ticking
-        public int tick => ticks.Max;
-        private readonly SortedSet<int> ticks = new SortedSet<int>();
+        private int previousTick;
+        private int nextTick;
+        private readonly SortedSet<int> ticks = new SortedSet<int> { 0 };
 
-        public void AddTick(int tick) {
-            ticks.Add(tick);
+        private bool AddTick(int tick) {
+            return ticks.Add(tick);
         }
 
         // IReadonlyDictionary implementation
@@ -40,17 +41,47 @@ namespace TestServer {
         // meat and potatoes
         private readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
 
-        public readonly TestServer.InputSystem inputSystem = new InputSystem_Implementation();
+        public TestGame.VisualizationSystem visualizationSystem { get; } = new VisualizationSystem_Implementation();
 
-        public readonly TestServer.MovementSystem movementSystem = new MovementSystem_Implementation();
+        void IClientWorld.Tick(int previousTick, int nextTick) {
+            if (previousTick != nextTick - 1) {
+                throw new InvalidOperationException($"Can't compute from tick {previousTick} to tick {nextTick}. Can only compute one tick at a time.");
+            }
 
-        public void Tick() {
-            ticks.Add(tick + 1);
+            lock (this) {
+                if (!ticks.Contains(previousTick)) {
+                    throw new InvalidOperationException($"Tick {previousTick} does not yet exist.");
+                }
 
-            inputSystem.Tick();
+                this.previousTick = previousTick;
+                this.nextTick = nextTick;
 
-            movementSystem.Tick();
+                visualizationSystem.Tick();
 
+                AddTick(nextTick);
+            }
         }
+
+        public TestGame.MovementSystem movementSystem { get; } = new MovementSystem_Implementation();
+
+        void IServerWorld.Tick(int previousTick, int nextTick) {
+            if (previousTick != nextTick - 1) {
+                throw new InvalidOperationException($"Can't compute from tick {previousTick} to tick {nextTick}. Can only compute one tick at a time.");
+            }
+
+            lock (this) {
+                if (!ticks.Contains(previousTick)) {
+                    throw new InvalidOperationException($"Tick {previousTick} does not yet exist.");
+                }
+
+                this.previousTick = previousTick;
+                this.nextTick = nextTick;
+
+                movementSystem.Tick();
+
+                AddTick(nextTick);
+            }
+        }
+
     }
 }

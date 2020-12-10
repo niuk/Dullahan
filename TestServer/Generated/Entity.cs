@@ -2,7 +2,7 @@
 using Dullahan;
 using System;
 
-namespace TestServer {
+namespace TestGame {
     partial class World {
         public sealed partial class Entity : IDisposable {
             public readonly Guid id;
@@ -17,9 +17,11 @@ namespace TestServer {
                 this.id = id;
                 this.world = world;
                 world.entitiesById.Add(id, this);
-                constructionTick = world.tick;
+                constructionTick = world.nextTick;
                 disposalTick = int.MaxValue;
             }
+
+            private Entity() { }
 
             private void Dispose(bool disposing) {
                 if (disposalTick == int.MaxValue) {
@@ -30,7 +32,7 @@ namespace TestServer {
 
                     }
 
-                    disposalTick = world.tick;
+                    disposalTick = world.nextTick;
                 }
             }
 
@@ -44,45 +46,61 @@ namespace TestServer {
             private Ring<InputComponent> inputComponent_snapshots = new Ring<InputComponent>();
             public InputComponent inputComponent {
                 get {
-                    return inputComponent_snapshots.PeekEnd();
+                    if (inputComponent_ticks.Count == 0) {
+                        return default;
+                    }
+
+                    int index = inputComponent_ticks.BinarySearch(world.previousTick);
+                    if (index < 0) {
+                        return inputComponent_snapshots[~index - 1];
+                    } else {
+                        return inputComponent_snapshots[index];
+                    }
                 }
 
                 private set {
-                    if (inputComponent_ticks.PeekEnd() == world.tick) {
-                        inputComponent_ticks.PopEnd();
-                        inputComponent_snapshots.PopEnd();
-                    }
-
                     if (inputComponent != value) {
-                        inputComponent_ticks.PushEnd(world.tick);
-                        inputComponent_snapshots.PushEnd(value);
+                        int index = inputComponent_ticks.BinarySearch(world.nextTick);
+                        if (index < 0) {
+                            inputComponent_ticks.Insert(~index, world.nextTick);
+                            inputComponent_snapshots.Insert(~index, value);
+                        } else {
+                            inputComponent_ticks[index] = world.nextTick;
+                            inputComponent_snapshots[index] = value;
+                        }
                     }
                 }
             }
-
-            public int inputComponent_disposalTick { get; private set; } = -1;
 
             private Ring<int> positionComponent_ticks = new Ring<int>();
             private Ring<PositionComponent> positionComponent_snapshots = new Ring<PositionComponent>();
             public PositionComponent positionComponent {
                 get {
-                    return positionComponent_snapshots.PeekEnd();
+                    if (positionComponent_ticks.Count == 0) {
+                        return default;
+                    }
+
+                    int index = positionComponent_ticks.BinarySearch(world.previousTick);
+                    if (index < 0) {
+                        return positionComponent_snapshots[~index - 1];
+                    } else {
+                        return positionComponent_snapshots[index];
+                    }
                 }
 
                 private set {
-                    if (positionComponent_ticks.PeekEnd() == world.tick) {
-                        positionComponent_ticks.PopEnd();
-                        positionComponent_snapshots.PopEnd();
-                    }
-
                     if (positionComponent != value) {
-                        positionComponent_ticks.PushEnd(world.tick);
-                        positionComponent_snapshots.PushEnd(value);
+                        int index = positionComponent_ticks.BinarySearch(world.nextTick);
+                        if (index < 0) {
+                            positionComponent_ticks.Insert(~index, world.nextTick);
+                            positionComponent_snapshots.Insert(~index, value);
+                        } else {
+                            positionComponent_ticks[index] = world.nextTick;
+                            positionComponent_snapshots[index] = value;
+                        }
                     }
                 }
             }
-
-            public int positionComponent_disposalTick { get; private set; } = -1;
 
         }
     }

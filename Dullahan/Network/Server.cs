@@ -41,9 +41,7 @@ namespace Dullahan.Network {
             int capacity,
             TimeSpan sendRate
         ) {
-            for (int i = 0; i < capacity; ++i) {
-                // can't use `i` directly because it gets overwritten during iteration
-                int port = portStart + i;
+            for (int port = portStart; port < portStart + capacity; ++port) {
                 clientsByPort.Add(port, new Client<TServerState, TClientState>(
                     serverStatesByTick,
                     serverStateDiffer,

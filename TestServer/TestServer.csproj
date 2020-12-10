@@ -22,12 +22,4 @@
     </None>
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Generated\" />
-  </ItemGroup>
-
-  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
-    <Exec Command="..\Generator\bin\Debug\net5.0\Generator.exe generate Generated TestServer Source" />
-  </Target>
-
 </Project>

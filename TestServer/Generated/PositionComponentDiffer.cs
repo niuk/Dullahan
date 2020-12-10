@@ -3,17 +3,24 @@ using Dullahan;
 using System;
 using System.IO;
 
-namespace TestServer {
+namespace TestGame {
     partial class World {
         partial class Entity {
             partial class PositionComponent {
                 public class Differ : IDiffer<(PositionComponent, int)> {
                     public bool Diff((PositionComponent, int) componentAtOldTick, (PositionComponent, int) componentAtNewTick, BinaryWriter writer) {
-                        if (componentAtOldTick.Item1 != componentAtNewTick.Item1) {
-                            throw new InvalidOperationException("Can only diff the same component at different ticks.");
+                        var component = componentAtOldTick.Item1;
+                        if (component == null) {
+                            component = componentAtNewTick.Item1;
+                            if (component == null) {
+                                throw new InvalidOperationException("Cannot diff two null components.");
+                            }
+                        } else {
+                            if (component != componentAtNewTick.Item1) {
+                                throw new InvalidOperationException("Can only diff the same component at different ticks.");
+                            }
                         }
 
-                        var component = componentAtOldTick.Item1;
                         int oldTick = componentAtOldTick.Item2;
                         int newTick = componentAtNewTick.Item2;
                         writer.Write(oldTick);
@@ -48,8 +55,7 @@ namespace TestServer {
                                     throw new InvalidOperationException("Tick {oldTick} is too old to diff.");
                                 }
 
-                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
-                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                var (offset, size) = snapshot.diffSpans[diffIndex];
                                 if (size > 0) {
                                     writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
                                     dirtyFlags |= 1 << 0;
@@ -81,8 +87,7 @@ namespace TestServer {
                                     throw new InvalidOperationException("Tick {oldTick} is too old to diff.");
                                 }
 
-                                int offset = diffIndex == 0 ? 0 : snapshot.diffOffsets[diffIndex - 1];
-                                int size = snapshot.diffOffsets[diffIndex] - offset;
+                                var (offset, size) = snapshot.diffSpans[diffIndex];
                                 if (size > 0) {
                                     writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
                                     dirtyFlags |= 1 << 1;

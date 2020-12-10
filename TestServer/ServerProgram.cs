@@ -4,7 +4,7 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 
-namespace TestServer {
+namespace TestGame {
     class ServerProgram {
         static void Main(string[] args) {
             int portStart = int.Parse(args[0]);
@@ -18,32 +18,38 @@ namespace TestServer {
                 capacity: capacity,
                 TimeSpan.FromSeconds(0.1));
 
+            var inputComponents = new IInputComponent[capacity];
+
             var stopwatch = new Stopwatch();
             var tickRate = TimeSpan.FromMilliseconds(10); // 100 ticks per second
-            while (true) {
+            for (int tick = 0; ; ++tick) {
                 stopwatch.Restart();
 
-                for (int i = 0; i < capacity; ++i) {
-                    if (server.GetClientConnected(portStart + i)) {
-                        var input = server.GetClientState(portStart + i);
+                lock (world) {
+                    for (int i = 0; i < capacity; ++i) {
+                        int port = portStart + i;
+                        if (server.GetClientConnected(port)) {
+                            if (inputComponents[i] == default) {
+                                inputComponents[i] = new World.Entity.InputComponent(new World.Entity(world));
+                            }
 
-                        unchecked {
-                            int deltaX = 0xf & input >> 4;
-                            int deltaY = 0xf & input;
-                            world.inputSystem.inputsById[i] = (
-                                (deltaX & 0x8) != 0 ? (int)(0xfffffff0 | deltaX) : deltaX,
-                                (deltaY & 0x8) != 0 ? (int)(0xfffffff0 | deltaY) : deltaY);
+                            var input = server.GetClientState(port);
+                            unchecked {
+                                inputComponents[i].deltaX = 0xf & input >> 4;
+                                inputComponents[i].deltaY = 0xf & input;
+                            }
+                        } else {
+                            if (inputComponents[i] != default) {
+                                inputComponents[i].Dispose();
+                                inputComponents[i] = default;
+                            }
                         }
-
-                        Console.Clear();
-                        Console.SetCursorPosition(0, 0);
-                        Console.Write($"{server.GetClientTick(portStart + i)}:\t{world.inputSystem.inputsById[i]}");
                     }
                 }
                 
-                world.Tick();
+                ((IServerWorld)world).Tick(tick, tick + 1);
 
-                server.serverTick = world.tick;
+                server.serverTick = tick + 1;
 
                 var elapsed = stopwatch.Elapsed;
                 if (tickRate > elapsed) {

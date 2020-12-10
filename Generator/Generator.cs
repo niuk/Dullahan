@@ -69,34 +69,49 @@ namespace Dullahan.Generator {
         }
 
         public static void Generate(string @namespace, string outputDirectory) {
-            File.WriteAllText(
-                Path.Combine(outputDirectory, "World.cs"),
+            var generatedPaths = new HashSet<string>();
+            void Collect(string outputPath, string content) {
+                File.WriteAllText(outputPath, content);
+                generatedPaths.Add(outputPath);
+            }
+
+            Collect(
+                Path.Combine(outputDirectory, $"World.cs"),
                 WorldGenerator.GenerateWorld(@namespace));
-            File.WriteAllText(
-                Path.Combine(outputDirectory, "WorldDiffer.cs"),
+            Collect(
+                Path.Combine(outputDirectory, $"WorldDiffer.cs"),
                 WorldGenerator.GenerateWorldDiffer(@namespace));
 
-            File.WriteAllText(
-                Path.Combine(outputDirectory, "Entity.cs"),
-                EntityGenerator.GenerateEntity(@namespace));
-            File.WriteAllText(
-                Path.Combine(outputDirectory, "EntityDiffer.cs"),
-                EntityGenerator.GenerateEntityDiffer(@namespace));
-
             foreach (var systemType in GetSystemTypes()) {
-                File.WriteAllText(
+                Collect(
                     Path.Combine(outputDirectory, $"{systemType.Name}_Implementation.cs"),
                     SystemGenerator.GenerateSystemImplementation(@namespace, systemType));
             }
 
+            Collect(
+                Path.Combine(outputDirectory, "Entity.cs"),
+                EntityGenerator.GenerateEntity(@namespace));
+            Collect(
+                Path.Combine(outputDirectory, "EntityDiffer.cs"),
+                EntityGenerator.GenerateEntityDiffer(@namespace));
+
             foreach (var IComponentType in GetIComponentTypes()) {
                 var componentTypeName = IComponentType.Name[1..];
-                File.WriteAllText(
+
+                Collect(
                     Path.Combine(outputDirectory, $"{componentTypeName}.cs"),
                     ComponentGenerator.GenerateComponent(@namespace, IComponentType, differTypeNameForDiffableTypeName));
-                File.WriteAllText(
+
+                Collect(
                     Path.Combine(outputDirectory, $"{componentTypeName}Differ.cs"),
                     ComponentGenerator.GenerateComponentDiffer(@namespace, IComponentType));
+            }
+
+            foreach (var path in GetFilesRecursively(outputDirectory, "*.cs")) {
+                if (!generatedPaths.Contains(path)) {
+                    Console.WriteLine($"Deleting \"{path}\"...");
+                    File.Delete(path);
+                }
             }
         }
 
@@ -140,7 +155,7 @@ namespace Dullahan.Generator {
         }
 
         public static void Clean(string outputDirectory) {
-            foreach (var file in Directory.GetFiles(outputDirectory)) {
+            foreach (var file in GetFilesRecursively(outputDirectory, "*.cs")) {
                 Console.WriteLine($"Deleting \"{file}\"...");
                 File.Delete(file);
             }
@@ -161,13 +176,65 @@ namespace Dullahan.Generator {
 
         public static IEnumerable<Type> GetSystemTypes() {
             foreach (var type in GetAllTypes()) {
-                if (typeof(ECS.ISystem).IsAssignableFrom(type) && type.IsAbstract && type != typeof(ECS.ISystem)) {
-                    if (type.Name.EndsWith("System")) {
-                        Console.WriteLine($"Found {typeof(ECS.ISystem)} implementation {type}");
-                        yield return type;
-                    } else {
-                        throw new Exception($"Invalid abstract system type name \"{type.Name}\": Must end with \"System\"!");
+                if (type.IsAssignableTo(typeof(ECS.ISystem)) && type != typeof(ECS.ISystem)) {
+                    if (!type.IsAbstract) {
+                        throw new InvalidProgramException($"System type {type.FullName} must be abstract.");
                     }
+
+                    if (!type.Name.EndsWith("System")) {
+                        throw new InvalidProgramException($"Invalid abstract system type name \"{type.Name}\": Must end with \"System\".");
+                    }
+
+                    var tickMethod = type.GetMethod("Tick");
+                    if (tickMethod == null) {
+                        throw new InvalidProgramException($"{type.FullName} must have a tick method.");
+                    }
+
+                    if (tickMethod.ReturnType != typeof(void)) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} must return void.");
+                    }
+
+                    if (tickMethod.GetParameters().Length > 0) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} cannot have any parameters.");
+                    }
+
+                    if (tickMethod.IsAbstract) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} must not be abstract.");
+                    }
+
+                    Console.WriteLine($"Found {typeof(ECS.ISystem)} implementation {type}");
+                    yield return type;
+                }
+            }
+        }
+
+        public static IEnumerable<Type> GetIWorldTypes() {
+            foreach (var type in GetAllTypes()) {
+                if (type.IsAssignableTo(typeof(ECS.IWorld)) && type != typeof(ECS.IWorld)) {
+                    if (!type.IsInterface) {
+                        throw new InvalidProgramException($"World type {type.FullName} must be an interface.");
+                    }
+
+                    if (!type.Name.EndsWith("World")) {
+                        throw new Exception($"Invalid world interface name \"{type.Name}\": Must end with \"World\".");
+                    }
+
+                    var tickMethod = type.GetMethod("Tick");
+                    if (tickMethod == null) {
+                        throw new InvalidProgramException($"{type.FullName} must have a tick method.");
+                    }
+
+                    if (tickMethod.ReturnType != typeof(void)) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} must return void.");
+                    }
+
+                    var parameters = tickMethod.GetParameters();
+                    if (parameters.Length != 2 || parameters[0].ParameterType != typeof(int) || parameters[1].ParameterType != typeof(int)) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} must have two int parameters.");
+                    }
+
+                    Console.WriteLine($"Found {typeof(ECS.IWorld)} implementation {type}");
+                    yield return type;
                 }
             }
         }

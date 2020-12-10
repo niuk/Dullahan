@@ -7,14 +7,14 @@ using System.Diagnostics;
 using System.Net;
 using System.Threading;
 
-namespace TestClient {
+namespace TestGame {
     class ClientProgram {
         static void Main(string[] args) {
             var deltasByTick = new SortedList<int, byte>();
-            var client = new Client<byte, (TestServer.World, int)>(
+            var client = new Client<byte, (World, int)>(
                 localStatesByTick: deltasByTick,
                 localStateDiffer: new ByteDiffer(),
-                remoteStateDiffer: new TestServer.World.Differ(),
+                remoteStateDiffer: new World.Differ(),
                 localEndPoint: new IPEndPoint(IPAddress.Any, 0),
                 remoteEndPoint: new IPEndPoint(IPAddress.Parse(args[0]), int.Parse(args[1])),
                 TimeSpan.FromSeconds(0.1));
@@ -23,7 +23,6 @@ namespace TestClient {
             var keyPressThread = new Thread(() => {
                 while (true) {
                     var key = Console.ReadKey(true).Key;
-
                     keyPressStopwatches.AddOrUpdate(
                         key,
                         key => {
@@ -59,12 +58,12 @@ namespace TestClient {
                         upArrowStopwatch.ElapsedMilliseconds < 100 ?
                             1 : 0);
 
-                Console.Clear();
-                Console.SetCursorPosition(0, 0);
-                Console.Write($"{i}:\t{(deltaX, deltaY)}");
-
                 deltasByTick.Add(i, (byte)((deltaX << 4) & 0xf0 | deltaY & 0xf));
                 client.LocalTick = i;
+
+                if (client.RemoteStatesByTick.TryGetValue(client.AckingRemoteTick, out (World, int) worldAtTick)) {
+                    ((IClientWorld)worldAtTick.Item1).Tick(client.AckingRemoteTick, client.AckingRemoteTick + 1);
+                }
 
                 var elapsed = stopwatch.Elapsed;
                 if (tickRate > elapsed) {

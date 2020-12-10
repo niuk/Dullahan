@@ -1,4 +1,6 @@
-﻿namespace Dullahan.Generator {
+﻿using static Dullahan.Generator.Generator;
+
+namespace Dullahan.Generator {
     static class EntityGenerator {
         public static string GenerateEntity(string @namespace) {
             var entity = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
@@ -20,15 +22,17 @@ namespace {@namespace} {{
                 this.id = id;
                 this.world = world;
                 world.entitiesById.Add(id, this);
-                constructionTick = world.tick;
+                constructionTick = world.nextTick;
                 disposalTick = int.MaxValue;
             }}
+
+            private Entity() {{ }}
 
             private void Dispose(bool disposing) {{
                 if (disposalTick == int.MaxValue) {{
                     if (disposing) {{";
 
-            foreach (var IComponentType in Generator.GetIComponentTypes()) {
+            foreach (var IComponentType in GetIComponentTypes()) {
                 entity += $@"
                         {IComponentType.Name[1..].Decapitalize()}.Dispose();
 ";
@@ -37,7 +41,7 @@ namespace {@namespace} {{
             entity += @"
                     }
 
-                    disposalTick = world.tick;
+                    disposalTick = world.nextTick;
                 }
             }
 
@@ -48,7 +52,7 @@ namespace {@namespace} {{
             }
 ";
 
-            foreach (var IComponentType in Generator.GetIComponentTypes()) {
+            foreach (var IComponentType in GetIComponentTypes()) {
                 var componentTypeName = IComponentType.Name[1..];
                 var componentPropertyName = componentTypeName.Decapitalize();
                 entity += $@"
@@ -56,23 +60,31 @@ namespace {@namespace} {{
             private Ring<{componentTypeName}> {componentPropertyName}_snapshots = new Ring<{componentTypeName}>();
             public {componentTypeName} {componentPropertyName} {{
                 get {{
-                    return {componentPropertyName}_snapshots.PeekEnd();
+                    if ({componentPropertyName}_ticks.Count == 0) {{
+                        return default;
+                    }}
+
+                    int index = {componentPropertyName}_ticks.BinarySearch(world.previousTick);
+                    if (index < 0) {{
+                        return {componentPropertyName}_snapshots[~index - 1];
+                    }} else {{
+                        return {componentPropertyName}_snapshots[index];
+                    }}
                 }}
 
                 private set {{
-                    if ({componentPropertyName}_ticks.PeekEnd() == world.tick) {{
-                        {componentPropertyName}_ticks.PopEnd();
-                        {componentPropertyName}_snapshots.PopEnd();
-                    }}
-
                     if ({componentPropertyName} != value) {{
-                        {componentPropertyName}_ticks.PushEnd(world.tick);
-                        {componentPropertyName}_snapshots.PushEnd(value);
+                        int index = {componentPropertyName}_ticks.BinarySearch(world.nextTick);
+                        if (index < 0) {{
+                            {componentPropertyName}_ticks.Insert(~index, world.nextTick);
+                            {componentPropertyName}_snapshots.Insert(~index, value);
+                        }} else {{
+                            {componentPropertyName}_ticks[index] = world.nextTick;
+                            {componentPropertyName}_snapshots[index] = value;
+                        }}
                     }}
                 }}
             }}
-
-            public int {componentPropertyName}_disposalTick {{ get; private set; }} = -1;
 ";
             }
 
@@ -95,7 +107,7 @@ namespace {@namespace} {{
         partial class Entity {{
             public sealed class Differ : IDiffer<(Entity, int)> {{";
 
-            foreach (var IComponentType in Generator.GetIComponentTypes()) {
+            foreach (var IComponentType in GetIComponentTypes()) {
                 var componentTypeName = IComponentType.Name[1..];
                 entityDiffer += $@"
                 private readonly {componentTypeName}.Differ {componentTypeName.Decapitalize()}Differ = new {componentTypeName}.Differ();";
@@ -103,11 +115,18 @@ namespace {@namespace} {{
 
             entityDiffer += @"
                 public bool Diff((Entity, int) entityAtOldTick, (Entity, int) entityAtNewTick, BinaryWriter writer) {
-                    if (entityAtOldTick.Item1 != entityAtNewTick.Item1) {
-                        throw new InvalidOperationException(""Can only diff the same entity at different ticks."");
-                    }
-
                     var entity = entityAtOldTick.Item1;
+                    if (entity == null) {{
+                        entity = entityAtNewTick.Item1;
+                        if (entity == null) {{
+                            throw new InvalidOperationException(""Cannot diff two null entities."");
+                        }}
+                    }} else {{
+                        if (entity != entityAtNewTick.Item1) {{
+                            throw new InvalidOperationException(""Can only diff the same entity at different ticks."");
+                        }}
+                    }}
+
                     int oldTick = entityAtOldTick.Item2;
                     int newTick = entityAtNewTick.Item2;
                     writer.Write(oldTick);
@@ -123,30 +142,35 @@ namespace {@namespace} {{
 ";
 
             int propertyIndex = 0;
-            foreach (var IComponentType in Generator.GetIComponentTypes()) {
-                var componentPropertyName = IComponentType.Name[1..].Decapitalize();
+            foreach (var IComponentType in GetIComponentTypes()) {
+                var componentTypeName = IComponentType.Name[1..];
+                var componentPropertyName = componentTypeName.Decapitalize();
                 entityDiffer += $@"
                     /* {componentPropertyName} */ {{
+                        {componentTypeName} oldSnapshot;
                         int oldSnapshotIndex = entity.{componentPropertyName}_ticks.BinarySearch(oldTick);
                         if (oldSnapshotIndex < 0) {{
                             oldSnapshotIndex = ~oldSnapshotIndex - 1;
                         }}
 
                         if (oldSnapshotIndex < 0) {{
-                            throw new InvalidOperationException($""Tick {{oldTick}} is too old to diff."");
+                            oldSnapshot = default;
+                        }} else {{
+                            oldSnapshot = entity.{componentPropertyName}_snapshots[oldSnapshotIndex];
                         }}
 
+                        {componentTypeName} newSnapshot;
                         int newSnapshotIndex = entity.{componentPropertyName}_ticks.BinarySearch(newTick);
                         if (newSnapshotIndex < 0) {{
                             newSnapshotIndex = ~newSnapshotIndex - 1;
                         }}
 
                         if (newSnapshotIndex < 0) {{
-                            throw new InvalidOperationException($""Tick {{newTick}} is too old to diff."");
+                            newSnapshot = default;
+                        }} else {{
+                            newSnapshot = entity.{componentPropertyName}_snapshots[newSnapshotIndex];
                         }}
 
-                        var oldSnapshot = entity.{componentPropertyName}_snapshots[oldSnapshotIndex];
-                        var newSnapshot = entity.{componentPropertyName}_snapshots[newSnapshotIndex];
                         if (oldSnapshot != null) {{
                             if (newSnapshot != null) {{
                                 int componentOffset = writer.GetOffset();
@@ -187,12 +211,15 @@ namespace {@namespace} {{
             entityDiffer += @"
                 public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {
                     var entity = entityAtTick.Item1;
-                    int tick = entityAtTick.Item2;
+                    if (entity == null) {{
+                        entity = new Entity();
+                    }}
 
+                    int tick = entityAtTick.Item2;
                     int oldTick = reader.ReadInt32();
                     int newTick = reader.ReadInt32();
                     if (tick != oldTick) {
-                            throw new InvalidOperationException($""Entity is at tick {tick} but patch is from tick {oldTick} to {newTick}."");
+                        throw new InvalidOperationException($""Entity is at tick {tick} but patch is from tick {oldTick} to {newTick}."");
                     }
 
                     byte dirtyFlags = reader.ReadByte();
@@ -201,7 +228,7 @@ namespace {@namespace} {{
 ";
             
             propertyIndex = 0;
-            foreach (var IComponentType in Generator.GetIComponentTypes()) {
+            foreach (var IComponentType in GetIComponentTypes()) {
                 var componentPropertyName = IComponentType.Name[1..].Decapitalize();
                 entityDiffer += $@"
                     if ((dirtyFlags >> {propertyIndex} & 1) != 0) {{

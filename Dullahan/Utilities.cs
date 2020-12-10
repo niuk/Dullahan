@@ -12,8 +12,21 @@ namespace Dullahan {
             return (int)offset;
         }
 
+        public static int GetOffset(this BinaryReader reader) {
+            long offset = reader.BaseStream.Position;
+            if (offset < int.MinValue || int.MaxValue < offset) {
+                throw new InternalBufferOverflowException();
+            }
+
+            return (int)offset;
+        }
+
         public static void SetOffset(this BinaryWriter writer, int offset) {
             writer.Seek(offset, SeekOrigin.Begin);
+        }
+
+        public static void SetOffset(this BinaryReader reader, int offset) {
+            reader.BaseStream.Position = offset;
         }
 
         public static TValue PeekEnd<TKey, TValue>(this SortedList<TKey, TValue> sortedList) {
