@@ -5,19 +5,18 @@ using System;
 namespace TestGame {
     partial class World {
         public sealed partial class Entity : IDisposable {
-            public readonly Guid id;
-
+            public readonly int id;
             public readonly World world;
             public readonly int constructionTick;
             public int disposalTick { get; private set; }
 
-            public Entity(World world) : this(world, Guid.NewGuid()) { }
+            public Entity(World world) : this(world, world.nextEntityId++) { }
 
-            public Entity(World world, Guid id) {
+            public Entity(World world, int id) {
                 this.id = id;
                 this.world = world;
                 world.entitiesById.Add(id, this);
-                constructionTick = world.nextTick;
+                constructionTick = world.currentTick;
                 disposalTick = int.MaxValue;
             }
 
@@ -26,13 +25,19 @@ namespace TestGame {
             private void Dispose(bool disposing) {
                 if (disposalTick == int.MaxValue) {
                     if (disposing) {
-                        inputComponent.Dispose();
+                        consoleBufferComponent?.Dispose();
 
-                        positionComponent.Dispose();
+                        positionComponent?.Dispose();
+
+                        timeComponent?.Dispose();
+
+                        velocityComponent?.Dispose();
+
+                        viewComponent?.Dispose();
 
                     }
 
-                    disposalTick = world.nextTick;
+                    disposalTick = world.currentTick;
                 }
             }
 
@@ -42,61 +47,171 @@ namespace TestGame {
                 GC.SuppressFinalize(this);
             }
 
-            private Ring<int> inputComponent_ticks = new Ring<int>();
-            private Ring<InputComponent> inputComponent_snapshots = new Ring<InputComponent>();
-            public InputComponent inputComponent {
+            private readonly Ring<int> consoleBufferComponent_ticks = new Ring<int> { 0 };
+            private readonly Ring<ConsoleBufferComponent> consoleBufferComponent_snapshots = new Ring<ConsoleBufferComponent> { null };
+            public ConsoleBufferComponent consoleBufferComponent {
                 get {
-                    if (inputComponent_ticks.Count == 0) {
+                    if (consoleBufferComponent_ticks.Count == 0) {
                         return default;
                     }
 
-                    int index = inputComponent_ticks.BinarySearch(world.previousTick);
+                    int index = consoleBufferComponent_ticks.BinarySearch(world.currentTick);
                     if (index < 0) {
-                        return inputComponent_snapshots[~index - 1];
-                    } else {
-                        return inputComponent_snapshots[index];
+                        index = ~index - 1;
                     }
+
+                    if (index < 0) {
+                        return default;
+                    }
+
+                    return consoleBufferComponent_snapshots[index];
                 }
 
                 private set {
-                    if (inputComponent != value) {
-                        int index = inputComponent_ticks.BinarySearch(world.nextTick);
+                    if (consoleBufferComponent != value) {
+                        int index = consoleBufferComponent_ticks.BinarySearch(world.currentTick);
                         if (index < 0) {
-                            inputComponent_ticks.Insert(~index, world.nextTick);
-                            inputComponent_snapshots.Insert(~index, value);
+                            consoleBufferComponent_ticks.Insert(~index, world.currentTick);
+                            consoleBufferComponent_snapshots.Insert(~index, value);
                         } else {
-                            inputComponent_ticks[index] = world.nextTick;
-                            inputComponent_snapshots[index] = value;
+                            consoleBufferComponent_ticks[index] = world.currentTick;
+                            consoleBufferComponent_snapshots[index] = value;
                         }
                     }
                 }
             }
 
-            private Ring<int> positionComponent_ticks = new Ring<int>();
-            private Ring<PositionComponent> positionComponent_snapshots = new Ring<PositionComponent>();
+            private readonly Ring<int> positionComponent_ticks = new Ring<int> { 0 };
+            private readonly Ring<PositionComponent> positionComponent_snapshots = new Ring<PositionComponent> { null };
             public PositionComponent positionComponent {
                 get {
                     if (positionComponent_ticks.Count == 0) {
                         return default;
                     }
 
-                    int index = positionComponent_ticks.BinarySearch(world.previousTick);
+                    int index = positionComponent_ticks.BinarySearch(world.currentTick);
                     if (index < 0) {
-                        return positionComponent_snapshots[~index - 1];
-                    } else {
-                        return positionComponent_snapshots[index];
+                        index = ~index - 1;
                     }
+
+                    if (index < 0) {
+                        return default;
+                    }
+
+                    return positionComponent_snapshots[index];
                 }
 
                 private set {
                     if (positionComponent != value) {
-                        int index = positionComponent_ticks.BinarySearch(world.nextTick);
+                        int index = positionComponent_ticks.BinarySearch(world.currentTick);
                         if (index < 0) {
-                            positionComponent_ticks.Insert(~index, world.nextTick);
+                            positionComponent_ticks.Insert(~index, world.currentTick);
                             positionComponent_snapshots.Insert(~index, value);
                         } else {
-                            positionComponent_ticks[index] = world.nextTick;
+                            positionComponent_ticks[index] = world.currentTick;
                             positionComponent_snapshots[index] = value;
+                        }
+                    }
+                }
+            }
+
+            private readonly Ring<int> timeComponent_ticks = new Ring<int> { 0 };
+            private readonly Ring<TimeComponent> timeComponent_snapshots = new Ring<TimeComponent> { null };
+            public TimeComponent timeComponent {
+                get {
+                    if (timeComponent_ticks.Count == 0) {
+                        return default;
+                    }
+
+                    int index = timeComponent_ticks.BinarySearch(world.currentTick);
+                    if (index < 0) {
+                        index = ~index - 1;
+                    }
+
+                    if (index < 0) {
+                        return default;
+                    }
+
+                    return timeComponent_snapshots[index];
+                }
+
+                private set {
+                    if (timeComponent != value) {
+                        int index = timeComponent_ticks.BinarySearch(world.currentTick);
+                        if (index < 0) {
+                            timeComponent_ticks.Insert(~index, world.currentTick);
+                            timeComponent_snapshots.Insert(~index, value);
+                        } else {
+                            timeComponent_ticks[index] = world.currentTick;
+                            timeComponent_snapshots[index] = value;
+                        }
+                    }
+                }
+            }
+
+            private readonly Ring<int> velocityComponent_ticks = new Ring<int> { 0 };
+            private readonly Ring<VelocityComponent> velocityComponent_snapshots = new Ring<VelocityComponent> { null };
+            public VelocityComponent velocityComponent {
+                get {
+                    if (velocityComponent_ticks.Count == 0) {
+                        return default;
+                    }
+
+                    int index = velocityComponent_ticks.BinarySearch(world.currentTick);
+                    if (index < 0) {
+                        index = ~index - 1;
+                    }
+
+                    if (index < 0) {
+                        return default;
+                    }
+
+                    return velocityComponent_snapshots[index];
+                }
+
+                private set {
+                    if (velocityComponent != value) {
+                        int index = velocityComponent_ticks.BinarySearch(world.currentTick);
+                        if (index < 0) {
+                            velocityComponent_ticks.Insert(~index, world.currentTick);
+                            velocityComponent_snapshots.Insert(~index, value);
+                        } else {
+                            velocityComponent_ticks[index] = world.currentTick;
+                            velocityComponent_snapshots[index] = value;
+                        }
+                    }
+                }
+            }
+
+            private readonly Ring<int> viewComponent_ticks = new Ring<int> { 0 };
+            private readonly Ring<ViewComponent> viewComponent_snapshots = new Ring<ViewComponent> { null };
+            public ViewComponent viewComponent {
+                get {
+                    if (viewComponent_ticks.Count == 0) {
+                        return default;
+                    }
+
+                    int index = viewComponent_ticks.BinarySearch(world.currentTick);
+                    if (index < 0) {
+                        index = ~index - 1;
+                    }
+
+                    if (index < 0) {
+                        return default;
+                    }
+
+                    return viewComponent_snapshots[index];
+                }
+
+                private set {
+                    if (viewComponent != value) {
+                        int index = viewComponent_ticks.BinarySearch(world.currentTick);
+                        if (index < 0) {
+                            viewComponent_ticks.Insert(~index, world.currentTick);
+                            viewComponent_snapshots.Insert(~index, value);
+                        } else {
+                            viewComponent_ticks[index] = world.currentTick;
+                            viewComponent_snapshots[index] = value;
                         }
                     }
                 }

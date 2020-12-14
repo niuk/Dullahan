@@ -24,18 +24,18 @@ namespace TestGame {
 
                 int oldTick = worldAtOldTick.Item2;
                 int newTick = worldAtNewTick.Item2;
+                if (oldTick >= newTick) {
+                    throw new InvalidOperationException($"Old tick {oldTick} must precede new tick {newTick}.");
+                }
 
                 writer.Write(oldTick);
-                Console.WriteLine($"{nameof(oldTick)} -> {writer.GetOffset()}");
                 writer.Write(newTick);
-                Console.WriteLine($"{nameof(newTick)} -> {writer.GetOffset()}");
 
                 // reserve room for count of changed entities
                 int startOffset = writer.GetOffset();
                 writer.Write(0);
-                Console.WriteLine($"changedCount -> {writer.GetOffset()}");
                 int changedCount = 0;
-                var disposed = new HashSet<Guid>();
+                var disposed = new HashSet<int>();
                 var constructed = new HashSet<Entity>();
                 lock (world) {
                     foreach (var entity in world.entitiesById.Values) {
@@ -44,14 +44,12 @@ namespace TestGame {
                             if (entity.constructionTick <= newTick && newTick < entity.disposalTick) {
                                 // entity also exists in new world
                                 int keyOffset = writer.GetOffset(); // preemptively write the key; erase when entities don't differ
-                                writer.Write(entity.id.ToByteArray());
-                                Console.WriteLine($"Guid -> {writer.GetOffset()}");
+                                writer.Write(entity.id);
                                 if (entityDiffer.Diff((entity, oldTick), (entity, newTick), writer)) {
                                     ++changedCount;
                                 } else {
                                     writer.SetOffset(keyOffset);
                                 }
-                                Console.WriteLine($"{nameof(entityDiffer)} -> {writer.GetOffset()}");
                             } else {
                                 // entity was disposed
                                 disposed.Add(entity.id);
@@ -73,19 +71,14 @@ namespace TestGame {
                     writer.SetOffset(savedOffset);
 
                     writer.Write(disposed.Count);
-                    Console.WriteLine($"disposedCount -> {writer.GetOffset()}");
                     foreach (var id in disposed) {
-                        writer.Write(id.ToByteArray());
-                        Console.WriteLine($"{nameof(id)} -> {writer.GetOffset()}");
+                        writer.Write(id);
                     }
 
                     writer.Write(constructed.Count);
-                    Console.WriteLine($"constructedCount -> {writer.GetOffset()}");
                     foreach (var entity in constructed) {
-                        writer.Write(entity.id.ToByteArray());
-                        Console.WriteLine($"Guid -> {writer.GetOffset()}");
+                        writer.Write(entity.id);
                         entityDiffer.Diff((entity, oldTick), (entity, newTick), writer);
-                        Console.WriteLine($"{nameof(entityDiffer)} -> {writer.GetOffset()}");
                     }
                 }
 
@@ -100,40 +93,41 @@ namespace TestGame {
 
                 var tick = worldAtTick.Item2;
                 int oldTick = reader.ReadInt32();
-                Console.WriteLine($"\t{nameof(oldTick)} -> {reader.GetOffset()}");
                 int newTick = reader.ReadInt32();
-                Console.WriteLine($"\t{nameof(newTick)} -> {reader.GetOffset()}");
                 if (tick != oldTick) {
                     throw new InvalidOperationException($"World is at tick {tick} but patch is from tick {oldTick} to {newTick}.");
                 }
 
                 lock (world) {
-                    world.AddTick(newTick);
+                    world.ticks.Add(newTick);
 
                     int changedCount = reader.ReadInt32();
-                    Console.WriteLine($"\t{nameof(changedCount)} -> {reader.GetOffset()}");
                     for (int i = 0; i < changedCount; ++i) {
-                        var id = new Guid(reader.ReadBytes(16));
-                        Console.WriteLine($"\tGuid -> {reader.GetOffset()}");
+                        var id = reader.ReadInt32();
                         var entityAtTick = (world.entitiesById[id], tick);
                         entityDiffer.Patch(ref entityAtTick, reader);
-                        Console.WriteLine($"\t{nameof(entityDiffer)} -> {reader.GetOffset()}");
                         world.entitiesById[id] = entityAtTick.Item1;
                     }
 
                     int disposedCount = reader.ReadInt32();
-                    Console.WriteLine($"\t{nameof(disposedCount)} -> {reader.GetOffset()}");
                     for (int i = 0; i < disposedCount; ++i) {
-                        world.entitiesById.Remove(new Guid(reader.ReadBytes(16)));
+                        world.entitiesById.Remove(reader.ReadInt32());
                     }
 
                     int constructedCount = reader.ReadInt32();
-                    Console.WriteLine($"\t{nameof(constructedCount)} -> {reader.GetOffset()}");
                     for (int i = 0; i < constructedCount; ++i) {
-                        var entityAtTick = (new Entity(world, new Guid(reader.ReadBytes(16))), tick);
-                        Console.WriteLine($"\tGuid -> {reader.GetOffset()}");
+                        int id = reader.ReadInt32();
+                        if (world.entitiesById.TryGetValue(id, out Entity existingEntity)) {
+                            if (existingEntity.constructionTick <= oldTick) {
+                                throw new InvalidOperationException($"Entity {id} was already created.");
+                            }
+
+                            existingEntity.Dispose();
+                            world.entitiesById.Remove(id);
+                        }
+
+                        var entityAtTick = (new Entity(world, id), tick);
                         entityDiffer.Patch(ref entityAtTick, reader);
-                        Console.WriteLine($"\t{nameof(entityDiffer)} -> {reader.GetOffset()}");
                     }
                 }
 

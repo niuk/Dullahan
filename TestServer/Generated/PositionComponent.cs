@@ -1,5 +1,6 @@
 /* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
@@ -14,43 +15,41 @@ namespace TestGame {
 
                 public PositionComponent(Entity entity) {
                     this.entity = entity;
-                    constructionTick = entity.world.nextTick;
+                    constructionTick = entity.world.currentTick;
                     disposalTick = int.MaxValue;
                     entity.positionComponent = this;
 
-                    if (entity.inputComponent != null) {
-                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Add(entity);
+                    if (entity.velocityComponent != null) {
+                        ((MovementSystem_Implementation)entity.world.movementSystem).controllables_entities.Add(entity);
                     }
 
-                    ((VisualizationSystem_Implementation)entity.world.visualizationSystem).positionComponents_collection.Add(entity);
+                    if (entity.viewComponent != null) {
+                        ((VisualizationSystem_Implementation)entity.world.visualizationSystem).avatars_entities.Add(entity);
+                    }
 
                 }
 
                 private class Snapshot_x {
                     public static readonly ConcurrentBag<Snapshot_x> pool = new ConcurrentBag<Snapshot_x>();
-                    public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
+                    public static readonly Dullahan.FloatDiffer differ = new Dullahan.FloatDiffer();
 
                     // diffTicks and diffEnds form an associative array
                     public readonly Ring<int> diffTicks = new Ring<int>();
                     public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
-                    public System.Int32 state;
-
-                    public Snapshot_x(System.Int32 state) {
-                        this.state = state;
-                    }
+                    public System.Single state = default;
                 }
 
                 // x_ticks and x_snapshots form an associative array
-                private readonly Ring<int> x_ticks = new Ring<int>();
-                private readonly Ring<Snapshot_x> x_snapshots = new Ring<Snapshot_x>();
-                public System.Int32 x {
+                private readonly Ring<int> x_ticks = new Ring<int> { 0 };
+                private readonly Ring<Snapshot_x> x_snapshots = new Ring<Snapshot_x> {new Snapshot_x() };
+                public System.Single x {
                     get {
                         if (x_ticks.Count == 0) {
                             return default;
                         }
 
-                        int index = x_ticks.BinarySearch(entity.world.previousTick);
+                        int index = x_ticks.BinarySearch(entity.world.currentTick);
                         if (index < 0) {
                             return x_snapshots[~index - 1].state;
                         } else {
@@ -61,30 +60,31 @@ namespace TestGame {
                     set {
                         Snapshot_x snapshot;
 
-                        int tick = entity.world.nextTick;
+                        int tick = entity.world.currentTick;
                         int index = x_ticks.BinarySearch(tick);
                         if (index < 0) {
                             if (!Snapshot_x.pool.TryTake(out snapshot)) {
-                                snapshot = new Snapshot_x(value);
+                                snapshot = new Snapshot_x();
                             }
                         } else {
                             snapshot = x_snapshots[index];
                             x_snapshots.RemoveAt(index);
+                            x_ticks.RemoveAt(index);
                         }
 
                         snapshot.diffTicks.Clear();
                         snapshot.diffSpans.Clear();
                         snapshot.diffWriter.SetOffset(0);
+                        snapshot.state = value;
 
                         if (index < 0) {
                             index = ~index;
                         }
 
                         // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
-                        int savedOffset;
                         int start = index - 1;
                         for (int i = start; i >= x_ticks.Start; --i) {
-                            savedOffset = snapshot.diffWriter.GetOffset();
+                            int savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_x.differ.Diff(x_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {
                                 if (i == start) {
                                     // value didn't change
@@ -99,21 +99,12 @@ namespace TestGame {
                             snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }
 
-                        // diff with tick 0
-                        savedOffset = snapshot.diffWriter.GetOffset();
-                        if (!Snapshot_x.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {
-                            snapshot.diffWriter.SetOffset(savedOffset);
-                        }
-
-                        snapshot.diffTicks.PushEnd(tick);
-                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
-
                         x_ticks.Insert(index, tick);
                         x_snapshots.Insert(index, snapshot);
 
                         // now that we have a new or modified snapshot, later snapshots need to diff with it
                         for (int i = index + 1; i < x_ticks.End; ++i) {
-                            savedOffset = x_snapshots[i].diffWriter.GetOffset();
+                            int savedOffset = x_snapshots[i].diffWriter.GetOffset();
                             if (!Snapshot_x.differ.Diff(snapshot.state, x_snapshots[i].state, x_snapshots[i].diffWriter)) {
                                 x_snapshots[i].diffWriter.SetOffset(savedOffset);
                             }
@@ -125,6 +116,7 @@ namespace TestGame {
                                 x_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
                                 x_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
                             } else {
+                                //x_snapshots[i].diffTick[diffIndex] = diffTick; // diffTick was found; no need to change it
                                 x_snapshots[i].diffSpans[diffIndex] = diffSpan;
                             }
                         }
@@ -133,29 +125,25 @@ namespace TestGame {
 
                 private class Snapshot_y {
                     public static readonly ConcurrentBag<Snapshot_y> pool = new ConcurrentBag<Snapshot_y>();
-                    public static readonly Dullahan.IntDiffer differ = new Dullahan.IntDiffer();
+                    public static readonly Dullahan.FloatDiffer differ = new Dullahan.FloatDiffer();
 
                     // diffTicks and diffEnds form an associative array
                     public readonly Ring<int> diffTicks = new Ring<int>();
                     public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
-                    public System.Int32 state;
-
-                    public Snapshot_y(System.Int32 state) {
-                        this.state = state;
-                    }
+                    public System.Single state = default;
                 }
 
                 // y_ticks and y_snapshots form an associative array
-                private readonly Ring<int> y_ticks = new Ring<int>();
-                private readonly Ring<Snapshot_y> y_snapshots = new Ring<Snapshot_y>();
-                public System.Int32 y {
+                private readonly Ring<int> y_ticks = new Ring<int> { 0 };
+                private readonly Ring<Snapshot_y> y_snapshots = new Ring<Snapshot_y> {new Snapshot_y() };
+                public System.Single y {
                     get {
                         if (y_ticks.Count == 0) {
                             return default;
                         }
 
-                        int index = y_ticks.BinarySearch(entity.world.previousTick);
+                        int index = y_ticks.BinarySearch(entity.world.currentTick);
                         if (index < 0) {
                             return y_snapshots[~index - 1].state;
                         } else {
@@ -166,30 +154,31 @@ namespace TestGame {
                     set {
                         Snapshot_y snapshot;
 
-                        int tick = entity.world.nextTick;
+                        int tick = entity.world.currentTick;
                         int index = y_ticks.BinarySearch(tick);
                         if (index < 0) {
                             if (!Snapshot_y.pool.TryTake(out snapshot)) {
-                                snapshot = new Snapshot_y(value);
+                                snapshot = new Snapshot_y();
                             }
                         } else {
                             snapshot = y_snapshots[index];
                             y_snapshots.RemoveAt(index);
+                            y_ticks.RemoveAt(index);
                         }
 
                         snapshot.diffTicks.Clear();
                         snapshot.diffSpans.Clear();
                         snapshot.diffWriter.SetOffset(0);
+                        snapshot.state = value;
 
                         if (index < 0) {
                             index = ~index;
                         }
 
                         // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
-                        int savedOffset;
                         int start = index - 1;
                         for (int i = start; i >= y_ticks.Start; --i) {
-                            savedOffset = snapshot.diffWriter.GetOffset();
+                            int savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_y.differ.Diff(y_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {
                                 if (i == start) {
                                     // value didn't change
@@ -204,21 +193,12 @@ namespace TestGame {
                             snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }
 
-                        // diff with tick 0
-                        savedOffset = snapshot.diffWriter.GetOffset();
-                        if (!Snapshot_y.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {
-                            snapshot.diffWriter.SetOffset(savedOffset);
-                        }
-
-                        snapshot.diffTicks.PushEnd(tick);
-                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
-
                         y_ticks.Insert(index, tick);
                         y_snapshots.Insert(index, snapshot);
 
                         // now that we have a new or modified snapshot, later snapshots need to diff with it
                         for (int i = index + 1; i < y_ticks.End; ++i) {
-                            savedOffset = y_snapshots[i].diffWriter.GetOffset();
+                            int savedOffset = y_snapshots[i].diffWriter.GetOffset();
                             if (!Snapshot_y.differ.Diff(snapshot.state, y_snapshots[i].state, y_snapshots[i].diffWriter)) {
                                 y_snapshots[i].diffWriter.SetOffset(savedOffset);
                             }
@@ -230,6 +210,7 @@ namespace TestGame {
                                 y_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
                                 y_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
                             } else {
+                                //y_snapshots[i].diffTick[diffIndex] = diffTick; // diffTick was found; no need to change it
                                 y_snapshots[i].diffSpans[diffIndex] = diffSpan;
                             }
                         }
@@ -239,12 +220,12 @@ namespace TestGame {
                 private void Dispose(bool disposing) {
                     if (disposalTick == int.MaxValue) {
                         if (disposing) {
-                            ((MovementSystem_Implementation)entity.world.movementSystem).controllables_collection.Remove(entity);
-                            ((VisualizationSystem_Implementation)entity.world.visualizationSystem).positionComponents_collection.Remove(entity);
+                            ((MovementSystem_Implementation)entity.world.movementSystem).controllables_entities.Remove(entity);
+                            ((VisualizationSystem_Implementation)entity.world.visualizationSystem).avatars_entities.Remove(entity);
                         }
 
                         entity.positionComponent = null;
-                        disposalTick = entity.world.nextTick;
+                        disposalTick = entity.world.currentTick;
                     }
                 }
 

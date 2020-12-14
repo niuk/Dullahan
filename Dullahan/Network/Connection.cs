@@ -232,29 +232,6 @@ namespace Dullahan.Network {
                                 blobsByLeftNumber.Add(newBlob.leftNumber, newBlob);
                                 blobsByRightNumber.Add(newBlob.rightNumber, newBlob);
                             }
-
-                            // display blobs
-                            /*
-                            for (int i = (anchorNumber.Value - anchorRange) & 0xfffff; i != ((anchorNumber.Value + 1) & 0xfffff); i = (i + 1) & 0xfffff) {
-                                if (!blobsByLeftNumber.TryGetValue(i, out Blob blob)) {
-                                    // also show completed blob
-                                    if (newBlob.leftNumber == i) {
-                                        blob = newBlob;
-                                    } else {
-                                        continue;
-                                    }
-                                }
-
-                                Console.ForegroundColor = ConsoleColor.Blue;
-                                Console.Write($"{(blob.hasLeftEnd ? "[" : "(")}{blob.leftNumber}, \"");
-                                for (int j = blob.leftNumber; j != ((blob.rightNumber + 1) & 0xfffff); j = (j + 1) & 0xfffff) {
-                                    Console.Write(Encoding.ASCII.GetString(fragmentsByNumber[j].Item1, 0, fragmentsByNumber[j].Item2));
-                                }
-                                Console.Write($"\", {blob.rightNumber}{(blob.hasRightEnd ? "]" : ")")}");
-                                Console.ResetColor();
-                            }
-                            Console.WriteLine();
-                            */
                         }
                     } finally {
                         dtlsTransport.Close();

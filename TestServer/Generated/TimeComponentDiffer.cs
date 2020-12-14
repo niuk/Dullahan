@@ -6,9 +6,9 @@ using System.IO;
 namespace TestGame {
     partial class World {
         partial class Entity {
-            partial class PositionComponent {
-                public class Differ : IDiffer<(PositionComponent, int)> {
-                    public bool Diff((PositionComponent, int) componentAtOldTick, (PositionComponent, int) componentAtNewTick, BinaryWriter writer) {
+            partial class TimeComponent {
+                public class Differ : IDiffer<(TimeComponent, int)> {
+                    public bool Diff((TimeComponent, int) componentAtOldTick, (TimeComponent, int) componentAtNewTick, BinaryWriter writer) {
                         var component = componentAtOldTick.Item1;
                         if (component == null) {
                             component = componentAtNewTick.Item1;
@@ -35,8 +35,8 @@ namespace TestGame {
                         int dirtyFlagsOffset = writer.GetOffset();
                         writer.Write(dirtyFlags);
 
-                        /* x */ {
-                            int snapshotIndex = component.x_ticks.BinarySearch(newTick);
+                        /* deltaTime */ {
+                            int snapshotIndex = component.deltaTime_ticks.BinarySearch(newTick);
                             if (snapshotIndex < 0) {
                                 snapshotIndex = ~snapshotIndex - 1;
                             }
@@ -45,10 +45,10 @@ namespace TestGame {
                                 throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
                             }
 
-                            int snapshotTick = component.x_ticks[snapshotIndex];
+                            int snapshotTick = component.deltaTime_ticks[snapshotIndex];
                             int diffTick = snapshotTick - oldTick;
                             if (diffTick > 0) {
-                                var snapshot = component.x_snapshots[snapshotIndex];
+                                var snapshot = component.deltaTime_snapshots[snapshotIndex];
 
                                 int diffIndex = snapshot.diffTicks.BinarySearch(diffTick);
                                 if (diffIndex < 0) {
@@ -67,38 +67,6 @@ namespace TestGame {
                             }
                         }
 
-                        /* y */ {
-                            int snapshotIndex = component.y_ticks.BinarySearch(newTick);
-                            if (snapshotIndex < 0) {
-                                snapshotIndex = ~snapshotIndex - 1;
-                            }
-
-                            if (snapshotIndex < 0) {
-                                throw new InvalidOperationException($"Tick {newTick} is too old to diff.");
-                            }
-
-                            int snapshotTick = component.y_ticks[snapshotIndex];
-                            int diffTick = snapshotTick - oldTick;
-                            if (diffTick > 0) {
-                                var snapshot = component.y_snapshots[snapshotIndex];
-
-                                int diffIndex = snapshot.diffTicks.BinarySearch(diffTick);
-                                if (diffIndex < 0) {
-                                    diffIndex = ~diffIndex;
-                                }
-
-                                if (diffIndex == snapshot.diffTicks.Count) {
-                                    throw new InvalidOperationException($"Tick {oldTick} is too old to diff.");
-                                }
-
-                                var (offset, size) = snapshot.diffSpans[diffIndex];
-                                if (size > 0) {
-                                    writer.Write(((MemoryStream)snapshot.diffWriter.BaseStream).GetBuffer(), offset, size);
-                                    dirtyFlags |= 1 << 1;
-                                }
-                            }
-                        }
-
                         int savedOffset = writer.GetOffset();
                         writer.SetOffset(dirtyFlagsOffset);
                         writer.Write(dirtyFlags);
@@ -107,7 +75,7 @@ namespace TestGame {
                         return dirtyFlags != 0;
                     }
 
-                    public void Patch(ref (PositionComponent, int) componentAtTick, BinaryReader reader) {
+                    public void Patch(ref (TimeComponent, int) componentAtTick, BinaryReader reader) {
                         var component = componentAtTick.Item1;
                         var tick = componentAtTick.Item2;
                         var oldTick = reader.ReadInt32();
@@ -119,15 +87,9 @@ namespace TestGame {
                         byte dirtyFlags = reader.ReadByte();
 
                         if ((dirtyFlags >> 0 & 1) != 0) {
-                            var value = component.x;
-                            Snapshot_x.differ.Patch(ref value, reader);
-                            component.x = value;
-                        }
-
-                        if ((dirtyFlags >> 1 & 1) != 0) {
-                            var value = component.y;
-                            Snapshot_y.differ.Patch(ref value, reader);
-                            component.y = value;
+                            var value = component.deltaTime;
+                            Snapshot_deltaTime.differ.Patch(ref value, reader);
+                            component.deltaTime = value;
                         }
 
                         componentAtTick.Item2 = newTick;

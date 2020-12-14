@@ -1,5 +1,4 @@
-﻿using Dullahan;
-using Dullahan.Network;
+﻿using Dullahan.Network;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -7,17 +6,33 @@ using System.Diagnostics;
 using System.Net;
 using System.Threading;
 
+using static Dullahan.Utilities;
+
 namespace TestGame {
     class ClientProgram {
         static void Main(string[] args) {
-            var deltasByTick = new SortedList<int, byte>();
-            var client = new Client<byte, (World, int)>(
+            var address = IPAddress.Parse(args[0]);
+            var port = int.Parse(args[1]);
+
+            var tickRate = TimeSpan.FromMilliseconds(100); // 100 ticks per second
+
+            var world = new World();
+            _ = new World.Entity.TimeComponent(new World.Entity(world)) {
+                deltaTime = tickRate.TotalSeconds
+            };
+            _ = new World.Entity.ConsoleBufferComponent(new World.Entity(world)) {
+                consoleBuffer = new byte[120, 32]
+            };
+
+            var deltasByTick = new SortedList<int, (float, float)> { { 0, (0f, 0f) } };
+            var client = new Client<(float, float), (World, int)>(
+                initialRemoteState: (world, 0),
                 localStatesByTick: deltasByTick,
-                localStateDiffer: new ByteDiffer(),
+                localStateDiffer: new Vector2Differ(),
                 remoteStateDiffer: new World.Differ(),
                 localEndPoint: new IPEndPoint(IPAddress.Any, 0),
-                remoteEndPoint: new IPEndPoint(IPAddress.Parse(args[0]), int.Parse(args[1])),
-                TimeSpan.FromSeconds(0.1));
+                remoteEndPoint: new IPEndPoint(address, port),
+                sendInterval: TimeSpan.FromSeconds(0.1));
 
             var keyPressStopwatches = new ConcurrentDictionary<ConsoleKey, Stopwatch>();
             var keyPressThread = new Thread(() => {
@@ -38,38 +53,30 @@ namespace TestGame {
             });
             keyPressThread.Start();
 
-            var stopwatch = new Stopwatch();
-            var tickRate = TimeSpan.FromMilliseconds(10); // 100 ticks per second
-            for (int i = 0; ; ++i) {
-                stopwatch.Restart();
-
-                int deltaX = (
+            FixedTimer(tick => {
+                float deltaX = (
                     keyPressStopwatches.TryGetValue(ConsoleKey.LeftArrow, out Stopwatch leftArrowStopwatch) &&
                         leftArrowStopwatch.ElapsedMilliseconds < 100 ?
-                            -1 : 0) + (
+                            -1f : 0f) + (
                     keyPressStopwatches.TryGetValue(ConsoleKey.RightArrow, out Stopwatch rightArrowStopwatch) &&
                         rightArrowStopwatch.ElapsedMilliseconds < 100 ?
-                            1 : 0);
-                int deltaY = (
+                            1f : 0f);
+                float deltaY = (
                     keyPressStopwatches.TryGetValue(ConsoleKey.DownArrow, out Stopwatch downArrowStopwatch) &&
                         downArrowStopwatch.ElapsedMilliseconds < 100 ?
-                            -1 : 0) + (
+                            1f : 0f) + (
                     keyPressStopwatches.TryGetValue(ConsoleKey.UpArrow, out Stopwatch upArrowStopwatch) &&
                         upArrowStopwatch.ElapsedMilliseconds < 100 ?
-                            1 : 0);
+                            -1f : 0f);
 
-                deltasByTick.Add(i, (byte)((deltaX << 4) & 0xf0 | deltaY & 0xf));
-                client.LocalTick = i;
+                deltasByTick.Add(tick, (deltaX, deltaY));
+                client.LocalTick = tick;
 
-                if (client.RemoteStatesByTick.TryGetValue(client.AckingRemoteTick, out (World, int) worldAtTick)) {
-                    ((IClientWorld)worldAtTick.Item1).Tick(client.AckingRemoteTick, client.AckingRemoteTick + 1);
+                var world = (IClientWorld)client.RemoteStatesByTick[client.AckingRemoteTick].Item1;
+                lock (world) {
+                    world.Tick(client.AckingRemoteTick + 1);
                 }
-
-                var elapsed = stopwatch.Elapsed;
-                if (tickRate > elapsed) {
-                    Thread.Sleep(tickRate - elapsed);
-                }
-            }
+            }, tickRate, new CancellationToken());
         }
     }
 }

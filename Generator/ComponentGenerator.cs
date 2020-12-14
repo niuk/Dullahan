@@ -33,6 +33,7 @@ namespace Dullahan.Generator {
             var componentTypeName = IComponentType.Name[1..];
             var component = $@"/* THIS IS A GENERATED FILE. DO NOT EDIT. */
 using Dullahan;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
@@ -47,28 +48,51 @@ namespace {@namespace} {{
 
                 public {componentTypeName}(Entity entity) {{
                     this.entity = entity;
-                    constructionTick = entity.world.nextTick;
+                    constructionTick = entity.world.currentTick;
                     disposalTick = int.MaxValue;
                     entity.{componentTypeName.Decapitalize()} = this;
 ";
 
             // add attached entity to system's observer collection
             foreach (var systemType in GetSystemTypes()) {
-                foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
-                    if (observedIComponentTypes.Contains(IComponentType)) {
-                        var condition = string.Join(" && ", observedIComponentTypes.
-                            Where(observedIComponentType => observedIComponentType != IComponentType).
-                            Select(observedIComponentType => $"entity.{observedIComponentType.Name[1..].Decapitalize()} != null"));
-                        if (!string.IsNullOrEmpty(condition)) {
-                            component += $@"
+                foreach (var (observerName, observedTypes, isSingleton) in systemType.GetObserverNameAndObservedTypes()) {
+                    var systemFieldPrefix = $"(({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}";
+                    if (observedTypes.Contains(IComponentType)) {
+                        var condition = string.Join(" && ", observedTypes.
+                            Where(t => t != IComponentType).
+                            Select(t => $"entity.{t.Name[1..].Decapitalize()} != null"));
+                        if (isSingleton) {
+                            if (!string.IsNullOrEmpty(condition)) {
+                                component += $@"
                     if ({condition}) {{
-                        (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Add(entity);
+                        if ({systemFieldPrefix}_entity != null) {{
+                            throw new InvalidOperationException(""Multiple {observerName} singletons for {systemType.FullName}!"");
+                        }}
+
+                        {systemFieldPrefix}_entity = entity;
                     }}
 ";
-                        } else {
-                            component += $@"
-                    (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Add(entity);
+                            } else {
+                                component += $@"
+                    if ({systemFieldPrefix}_entity != null) {{
+                        throw new InvalidOperationException(""Multiple {observerName} singletons for {systemType.FullName}!"");
+                    }}
+
+                    {systemFieldPrefix}_entity = entity;
 ";
+                            }
+                        } else {
+                            if (!string.IsNullOrEmpty(condition)) {
+                                component += $@"
+                    if ({condition}) {{
+                        {systemFieldPrefix}_entities.Add(entity);
+                    }}
+";
+                            } else {
+                                component += $@"
+                    {systemFieldPrefix}_entities.Add(entity);
+";
+                            }
                         }
                     }
                 }
@@ -94,23 +118,19 @@ namespace {@namespace} {{
                     public readonly Ring<int> diffTicks = new Ring<int>();
                     public readonly Ring<(int, int)> diffSpans = new Ring<(int, int)>();
                     public readonly BinaryWriter diffWriter = new BinaryWriter(new MemoryStream(), Encoding.UTF8, leaveOpen: true);
-                    public {propertyTypeName} state;
-
-                    public Snapshot_{propertyName}({propertyTypeName} state) {{
-                        this.state = state;
-                    }}
+                    public {propertyTypeName} state = default;
                 }}
 
                 // {propertyName}_ticks and {propertyName}_snapshots form an associative array
-                private readonly Ring<int> {propertyName}_ticks = new Ring<int>();
-                private readonly Ring<Snapshot_{propertyName}> {propertyName}_snapshots = new Ring<Snapshot_{propertyName}>();
+                private readonly Ring<int> {propertyName}_ticks = new Ring<int> {{ 0 }};
+                private readonly Ring<Snapshot_{propertyName}> {propertyName}_snapshots = new Ring<Snapshot_{propertyName}> {{new Snapshot_{propertyName}() }};
                 public {propertyTypeName} {propertyName} {{
                     get {{
                         if ({propertyName}_ticks.Count == 0) {{
                             return default;
                         }}
 
-                        int index = {propertyName}_ticks.BinarySearch(entity.world.previousTick);
+                        int index = {propertyName}_ticks.BinarySearch(entity.world.currentTick);
                         if (index < 0) {{
                             return {propertyName}_snapshots[~index - 1].state;
                         }} else {{
@@ -121,30 +141,31 @@ namespace {@namespace} {{
                     set {{
                         Snapshot_{propertyName} snapshot;
 
-                        int tick = entity.world.nextTick;
+                        int tick = entity.world.currentTick;
                         int index = {propertyName}_ticks.BinarySearch(tick);
                         if (index < 0) {{
                             if (!Snapshot_{propertyName}.pool.TryTake(out snapshot)) {{
-                                snapshot = new Snapshot_{propertyName}(value);
+                                snapshot = new Snapshot_{propertyName}();
                             }}
                         }} else {{
                             snapshot = {propertyName}_snapshots[index];
                             {propertyName}_snapshots.RemoveAt(index);
+                            {propertyName}_ticks.RemoveAt(index);
                         }}
 
                         snapshot.diffTicks.Clear();
                         snapshot.diffSpans.Clear();
                         snapshot.diffWriter.SetOffset(0);
+                        snapshot.state = value;
 
                         if (index < 0) {{
                             index = ~index;
                         }}
 
                         // iterate backwards because we might terminate on finding no diffs w.r.t. the immediately preceding tick
-                        int savedOffset;
                         int start = index - 1;
                         for (int i = start; i >= {propertyName}_ticks.Start; --i) {{
-                            savedOffset = snapshot.diffWriter.GetOffset();
+                            int savedOffset = snapshot.diffWriter.GetOffset();
                             if (!Snapshot_{propertyName}.differ.Diff({propertyName}_snapshots[i].state, snapshot.state, snapshot.diffWriter)) {{
                                 if (i == start) {{
                                     // value didn't change
@@ -159,21 +180,12 @@ namespace {@namespace} {{
                             snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
                         }}
 
-                        // diff with tick 0
-                        savedOffset = snapshot.diffWriter.GetOffset();
-                        if (!Snapshot_{propertyName}.differ.Diff(default, snapshot.state, snapshot.diffWriter)) {{
-                            snapshot.diffWriter.SetOffset(savedOffset);
-                        }}
-
-                        snapshot.diffTicks.PushEnd(tick);
-                        snapshot.diffSpans.PushEnd((savedOffset, snapshot.diffWriter.GetOffset() - savedOffset));
-
                         {propertyName}_ticks.Insert(index, tick);
                         {propertyName}_snapshots.Insert(index, snapshot);
 
                         // now that we have a new or modified snapshot, later snapshots need to diff with it
                         for (int i = index + 1; i < {propertyName}_ticks.End; ++i) {{
-                            savedOffset = {propertyName}_snapshots[i].diffWriter.GetOffset();
+                            int savedOffset = {propertyName}_snapshots[i].diffWriter.GetOffset();
                             if (!Snapshot_{propertyName}.differ.Diff(snapshot.state, {propertyName}_snapshots[i].state, {propertyName}_snapshots[i].diffWriter)) {{
                                 {propertyName}_snapshots[i].diffWriter.SetOffset(savedOffset);
                             }}
@@ -185,6 +197,7 @@ namespace {@namespace} {{
                                 {propertyName}_snapshots[i].diffTicks.Insert(~diffIndex, diffTick);
                                 {propertyName}_snapshots[i].diffSpans.Insert(~diffIndex, diffSpan);
                             }} else {{
+                                //{propertyName}_snapshots[i].diffTick[diffIndex] = diffTick; // diffTick was found; no need to change it
                                 {propertyName}_snapshots[i].diffSpans[diffIndex] = diffSpan;
                             }}
                         }}
@@ -200,10 +213,17 @@ namespace {@namespace} {{
 
             // remove attached entity from relevant system's observed collection
             foreach (var systemType in GetSystemTypes()) {
-                foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
-                    if (observedIComponentTypes.Contains(IComponentType)) {
-                        component += $@"
-                            (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_collection.Remove(entity);";
+                foreach (var (observerName, observedTypes, isSingleton) in systemType.GetObserverNameAndObservedTypes()) {
+                    if (isSingleton) {
+                        if (observedTypes.Contains(IComponentType)) {
+                            component += $@"
+                            (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_entity = null;";
+                        }
+                    } else {
+                        if (observedTypes.Contains(IComponentType)) {
+                            component += $@"
+                            (({systemType.Name}_Implementation)entity.world.{systemType.Name.Decapitalize()}).{observerName}_entities.Remove(entity);";
+                        }
                     }
                 }
             }
@@ -222,7 +242,7 @@ namespace {@namespace} {{
                         }}
 
                         entity.{componentTypeName.Decapitalize()} = null;
-                        disposalTick = entity.world.nextTick;
+                        disposalTick = entity.world.currentTick;
                     }}
                 }}
 
@@ -269,6 +289,10 @@ namespace {@namespace} {{
 
                         int oldTick = componentAtOldTick.Item2;
                         int newTick = componentAtNewTick.Item2;
+                        if (oldTick >= newTick) {{
+                            throw new InvalidOperationException($""Old tick {{oldTick}} must precede new tick {{newTick}}."");
+                        }}
+
                         writer.Write(oldTick);
                         writer.Write(newTick);
 
@@ -302,7 +326,7 @@ namespace {@namespace} {{
                                 }}
 
                                 if (diffIndex == snapshot.diffTicks.Count) {{
-                                    throw new InvalidOperationException(""Tick {{oldTick}} is too old to diff."");
+                                    throw new InvalidOperationException($""Tick {{oldTick}} is too old to diff."");
                                 }}
 
                                 var (offset, size) = snapshot.diffSpans[diffIndex];

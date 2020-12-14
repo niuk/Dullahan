@@ -10,19 +10,18 @@ using System;
 namespace {@namespace} {{
     partial class World {{
         public sealed partial class Entity : IDisposable {{
-            public readonly Guid id;
-
+            public readonly int id;
             public readonly World world;
             public readonly int constructionTick;
             public int disposalTick {{ get; private set; }}
 
-            public Entity(World world) : this(world, Guid.NewGuid()) {{ }}
+            public Entity(World world) : this(world, world.nextEntityId++) {{ }}
 
-            public Entity(World world, Guid id) {{
+            public Entity(World world, int id) {{
                 this.id = id;
                 this.world = world;
                 world.entitiesById.Add(id, this);
-                constructionTick = world.nextTick;
+                constructionTick = world.currentTick;
                 disposalTick = int.MaxValue;
             }}
 
@@ -34,14 +33,14 @@ namespace {@namespace} {{
 
             foreach (var IComponentType in GetIComponentTypes()) {
                 entity += $@"
-                        {IComponentType.Name[1..].Decapitalize()}.Dispose();
+                        {IComponentType.Name[1..].Decapitalize()}?.Dispose();
 ";
             }
 
             entity += @"
                     }
 
-                    disposalTick = world.nextTick;
+                    disposalTick = world.currentTick;
                 }
             }
 
@@ -56,30 +55,34 @@ namespace {@namespace} {{
                 var componentTypeName = IComponentType.Name[1..];
                 var componentPropertyName = componentTypeName.Decapitalize();
                 entity += $@"
-            private Ring<int> {componentPropertyName}_ticks = new Ring<int>();
-            private Ring<{componentTypeName}> {componentPropertyName}_snapshots = new Ring<{componentTypeName}>();
+            private readonly Ring<int> {componentPropertyName}_ticks = new Ring<int> {{ 0 }};
+            private readonly Ring<{componentTypeName}> {componentPropertyName}_snapshots = new Ring<{componentTypeName}> {{ null }};
             public {componentTypeName} {componentPropertyName} {{
                 get {{
                     if ({componentPropertyName}_ticks.Count == 0) {{
                         return default;
                     }}
 
-                    int index = {componentPropertyName}_ticks.BinarySearch(world.previousTick);
+                    int index = {componentPropertyName}_ticks.BinarySearch(world.currentTick);
                     if (index < 0) {{
-                        return {componentPropertyName}_snapshots[~index - 1];
-                    }} else {{
-                        return {componentPropertyName}_snapshots[index];
+                        index = ~index - 1;
                     }}
+
+                    if (index < 0) {{
+                        return default;
+                    }}
+
+                    return {componentPropertyName}_snapshots[index];
                 }}
 
                 private set {{
                     if ({componentPropertyName} != value) {{
-                        int index = {componentPropertyName}_ticks.BinarySearch(world.nextTick);
+                        int index = {componentPropertyName}_ticks.BinarySearch(world.currentTick);
                         if (index < 0) {{
-                            {componentPropertyName}_ticks.Insert(~index, world.nextTick);
+                            {componentPropertyName}_ticks.Insert(~index, world.currentTick);
                             {componentPropertyName}_snapshots.Insert(~index, value);
                         }} else {{
-                            {componentPropertyName}_ticks[index] = world.nextTick;
+                            {componentPropertyName}_ticks[index] = world.currentTick;
                             {componentPropertyName}_snapshots[index] = value;
                         }}
                     }}
@@ -129,6 +132,10 @@ namespace {@namespace} {{
 
                     int oldTick = entityAtOldTick.Item2;
                     int newTick = entityAtNewTick.Item2;
+                    if (oldTick >= newTick) {{
+                        throw new InvalidOperationException($""Old tick {{oldTick}} must precede new tick {{newTick}}."");
+                    }}
+
                     writer.Write(oldTick);
                     writer.Write(newTick);
 
@@ -211,10 +218,6 @@ namespace {@namespace} {{
             entityDiffer += @"
                 public void Patch(ref (Entity, int) entityAtTick, BinaryReader reader) {
                     var entity = entityAtTick.Item1;
-                    if (entity == null) {{
-                        entity = new Entity();
-                    }}
-
                     int tick = entityAtTick.Item2;
                     int oldTick = reader.ReadInt32();
                     int newTick = reader.ReadInt32();
@@ -235,6 +238,11 @@ namespace {@namespace} {{
                         var tuple = (entity.{componentPropertyName}, tick);
                         {componentPropertyName}Differ.Patch(ref tuple, reader);
                     }} else if ((createFlags >> {propertyIndex} & 1) != 0) {{
+                        if (entity.{componentPropertyName} != null) {{
+                            entity.{componentPropertyName}.Dispose();
+                            entity.{componentPropertyName} = null;
+                        }}
+
                         var tuple = (new {IComponentType.Name[1..]}(entity), tick);
                         {componentPropertyName}Differ.Patch(ref tuple, reader);
                     }} else if ((deleteFlags >> {propertyIndex} & 1) != 0) {{

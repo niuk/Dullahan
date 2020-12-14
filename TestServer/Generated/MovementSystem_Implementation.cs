@@ -6,8 +6,11 @@ namespace TestGame {
     partial class World {
         public sealed class MovementSystem_Implementation : TestGame.MovementSystem {
 
-            public readonly HashSet<Entity> controllables_collection = new HashSet<Entity>();
-            protected override IEnumerable<(TestGame.IInputComponent, TestGame.IPositionComponent)> controllables => controllables_collection.Select(entity => ((TestGame.IInputComponent)entity.inputComponent, (TestGame.IPositionComponent)entity.positionComponent));
+            public readonly HashSet<Entity> controllables_entities = new HashSet<Entity>();
+            protected override IEnumerable<(TestGame.IVelocityComponent, TestGame.IPositionComponent)> controllables => controllables_entities.Select(controllables_entity => ((TestGame.IVelocityComponent)controllables_entity.velocityComponent, (TestGame.IPositionComponent)controllables_entity.positionComponent));
+
+            public Entity timeComponent_entity = null;
+            protected override TestGame.ITimeComponent timeComponent => (TestGame.ITimeComponent)timeComponent_entity.timeComponent;
 
         }
     }

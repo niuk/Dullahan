@@ -16,14 +16,12 @@ using System.Linq;
 
 namespace {@namespace} {{
     public sealed partial class World : IReadOnlyDictionary<int, (World, int)>, {string.Join(", ", GetIWorldTypes().Select(t => t.FullName))} {{
-        // ticks and ticking
-        private int previousTick;
-        private int nextTick;
-        private readonly SortedSet<int> ticks = new SortedSet<int> {{ 0 }};
+        // for deterministic entity creation and identification
+        private int nextEntityId = 0;
 
-        private bool AddTick(int tick) {{
-            return ticks.Add(tick);
-        }}
+        // ticks and ticking
+        private int currentTick = 0;
+        private readonly SortedSet<int> ticks = new SortedSet<int> {{ 0 }};
 
         // IReadonlyDictionary implementation
         public IEnumerable<int> Keys => ticks;
@@ -49,7 +47,7 @@ namespace {@namespace} {{
         }}
 
         // meat and potatoes
-        private readonly Dictionary<Guid, Entity> entitiesById = new Dictionary<Guid, Entity>();
+        private readonly Dictionary<int, Entity> entitiesById = new Dictionary<int, Entity>();
 ";
 
             foreach (var IWorldType in GetIWorldTypes()) {
@@ -86,18 +84,12 @@ namespace {@namespace} {{
                 }
 
                 world += $@"
-        void {IWorldType.Name}.Tick(int previousTick, int nextTick) {{
-            if (previousTick != nextTick - 1) {{
-                throw new InvalidOperationException($""Can't compute from tick {{previousTick}} to tick {{nextTick}}. Can only compute one tick at a time."");
+        void {IWorldType.Name}.Tick(int tick) {{
+            if (!ticks.Contains(tick - 1)) {{
+                throw new InvalidOperationException($""Tick {{tick - 1}} does not yet exist."");
             }}
 
-            lock (this) {{
-                if (!ticks.Contains(previousTick)) {{
-                    throw new InvalidOperationException($""Tick {{previousTick}} does not yet exist."");
-                }}
-
-                this.previousTick = previousTick;
-                this.nextTick = nextTick;
+            currentTick = tick;
 ";
 
                 var untickedSystemTypes = new HashSet<Type>(systemTypes);
@@ -116,7 +108,7 @@ namespace {@namespace} {{
                         }
 
                         world += $@"
-                {untickedSystemType.Name.Decapitalize()}.Tick();
+            {untickedSystemType.Name.Decapitalize()}.Tick();
 ";
                     }
 
@@ -134,8 +126,7 @@ namespace {@namespace} {{
                 }
 
                 world += @"
-                AddTick(nextTick);
-            }
+            ticks.Add(currentTick);
         }
 ";
             }
@@ -174,6 +165,9 @@ namespace {@namespace} {{
 
                 int oldTick = worldAtOldTick.Item2;
                 int newTick = worldAtNewTick.Item2;
+                if (oldTick >= newTick) {{
+                    throw new InvalidOperationException($""Old tick {{oldTick}} must precede new tick {{newTick}}."");
+                }}
 
                 writer.Write(oldTick);
                 writer.Write(newTick);
@@ -182,7 +176,7 @@ namespace {@namespace} {{
                 int startOffset = writer.GetOffset();
                 writer.Write(0);
                 int changedCount = 0;
-                var disposed = new HashSet<Guid>();
+                var disposed = new HashSet<int>();
                 var constructed = new HashSet<Entity>();
                 lock (world) {{
                     foreach (var entity in world.entitiesById.Values) {{
@@ -191,7 +185,7 @@ namespace {@namespace} {{
                             if (entity.constructionTick <= newTick && newTick < entity.disposalTick) {{
                                 // entity also exists in new world
                                 int keyOffset = writer.GetOffset(); // preemptively write the key; erase when entities don't differ
-                                writer.Write(entity.id.ToByteArray());
+                                writer.Write(entity.id);
                                 if (entityDiffer.Diff((entity, oldTick), (entity, newTick), writer)) {{
                                     ++changedCount;
                                 }} else {{
@@ -219,11 +213,12 @@ namespace {@namespace} {{
 
                     writer.Write(disposed.Count);
                     foreach (var id in disposed) {{
-                        writer.Write(id.ToByteArray());
+                        writer.Write(id);
                     }}
 
                     writer.Write(constructed.Count);
                     foreach (var entity in constructed) {{
+                        writer.Write(entity.id);
                         entityDiffer.Diff((entity, oldTick), (entity, newTick), writer);
                     }}
                 }}
@@ -245,11 +240,11 @@ namespace {@namespace} {{
                 }}
 
                 lock (world) {{
-                    world.AddTick(newTick);
+                    world.ticks.Add(newTick);
 
                     int changedCount = reader.ReadInt32();
                     for (int i = 0; i < changedCount; ++i) {{
-                        var id = new Guid(reader.ReadBytes(16));
+                        var id = reader.ReadInt32();
                         var entityAtTick = (world.entitiesById[id], tick);
                         entityDiffer.Patch(ref entityAtTick, reader);
                         world.entitiesById[id] = entityAtTick.Item1;
@@ -257,12 +252,22 @@ namespace {@namespace} {{
 
                     int disposedCount = reader.ReadInt32();
                     for (int i = 0; i < disposedCount; ++i) {{
-                        world.entitiesById.Remove(new Guid(reader.ReadBytes(16)));
+                        world.entitiesById.Remove(reader.ReadInt32());
                     }}
 
                     int constructedCount = reader.ReadInt32();
                     for (int i = 0; i < constructedCount; ++i) {{
-                        var entityAtTick = (new Entity(world, new Guid(reader.ReadBytes(16))), tick);
+                        int id = reader.ReadInt32();
+                        if (world.entitiesById.TryGetValue(id, out Entity existingEntity)) {{
+                            if (existingEntity.constructionTick <= oldTick) {{
+                                throw new InvalidOperationException($""Entity {{id}} was already created."");
+                            }}
+
+                            existingEntity.Dispose();
+                            world.entitiesById.Remove(id);
+                        }}
+
+                        var entityAtTick = (new Entity(world, id), tick);
                         entityDiffer.Patch(ref entityAtTick, reader);
                     }}
                 }}

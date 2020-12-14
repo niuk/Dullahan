@@ -229,8 +229,8 @@ namespace Dullahan.Generator {
                     }
 
                     var parameters = tickMethod.GetParameters();
-                    if (parameters.Length != 2 || parameters[0].ParameterType != typeof(int) || parameters[1].ParameterType != typeof(int)) {
-                        throw new InvalidProgramException($"Tick method in {type.FullName} must have two int parameters.");
+                    if (parameters.Length != 1 || parameters[0].ParameterType != typeof(int)) {
+                        throw new InvalidProgramException($"Tick method in {type.FullName} must have a single int parameter.");
                     }
 
                     Console.WriteLine($"Found {typeof(ECS.IWorld)} implementation {type}");
@@ -239,33 +239,29 @@ namespace Dullahan.Generator {
             }
         }
 
-        public static IEnumerable<(string, IEnumerable<Type>)> GetObserverNameAndObservedIComponentTypes(this Type systemType) {
+        public static IEnumerable<(string, Type[], bool)> GetObserverNameAndObservedTypes(this Type systemType) {
+            static (string, Type[], bool) GetObservedTypes(string propertyName, Type type, bool isSingleton) {
+                if (type.IsAssignableTo(typeof(ECS.IComponent))) {
+                    return (propertyName, new[] { type }, isSingleton);
+                } else if (type.IsGenericType && type.GetGenericTypeDefinition().Name.Split('`')[0] == "ValueTuple") {
+                    var arguments = type.GetGenericArguments();
+                    if (arguments.Any(itemType => !itemType.IsAssignableTo(typeof(ECS.IComponent)))) {
+                        throw new InvalidProgramException($"Bad system property \"{propertyName}\": all tuple items must be components.");
+                    }
+
+                    return (propertyName, arguments, isSingleton);
+                } else {
+                    throw new InvalidProgramException($"Bad system property \"{propertyName}\": neither a component nor a tuple of components");
+                }
+            }
+
             foreach (var method in systemType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)) {
                 if (method.Name.StartsWith("get_") && method.IsAbstract) {
                     var propertyName = method.Name[4..];
-                    if (!method.ReturnType.IsGenericType || method.ReturnType.GetGenericTypeDefinition() != typeof(IEnumerable<>)) {
-                        throw new InvalidProgramException($"Property \"{propertyName}\" in system {systemType} must be {typeof(IEnumerable<>)} type!");
-                    }
-
-                    var badPropertyMessage = $"Property \"{propertyName}\" must enumerate components or tuples of components!";
-                    var elementType = method.ReturnType.GetGenericArguments()[0];
-                    if (elementType.IsGenericType) {
-                        if (elementType.GetGenericTypeDefinition().Name.Split('`')[0] != "ValueTuple") {
-                            throw new InvalidProgramException(badPropertyMessage);
-                        }
-
-                        var arguments = elementType.GetGenericArguments();
-                        if (arguments.Any(itemType => !itemType.IsAssignableTo(typeof(ECS.IComponent)))) {
-                            throw new InvalidProgramException(badPropertyMessage);
-                        }
-
-                        yield return (propertyName, arguments);
+                    if (method.ReturnType.IsGenericType && method.ReturnType.GetGenericTypeDefinition() == typeof(IEnumerable<>)) {
+                        yield return GetObservedTypes(propertyName, method.ReturnType.GetGenericArguments()[0], false);
                     } else {
-                        if (!elementType.IsAssignableTo(typeof(ECS.IComponent))) {
-                            throw new InvalidProgramException(badPropertyMessage);
-                        }
-
-                        yield return (propertyName, Enumerable.Repeat(elementType, 1));
+                        yield return GetObservedTypes(propertyName, method.ReturnType, true);
                     }
                 }
             }
@@ -275,8 +271,14 @@ namespace Dullahan.Generator {
             Console.WriteLine($"Gathering {typeof(IDiffer<>)} implementations...");
 
             foreach (var type in GetAllTypes()) {
+                if (type.Name.Contains("Rank2BufferDiffer")) {
+                    Console.WriteLine("Found Rank2BufferDiffer:");
+                }
                 var interfaces = type.GetInterfaces();
                 foreach (var @interface in interfaces) {
+                    if (type.Name.Contains("Rank2BufferDiffer")) {
+                        Console.WriteLine($"Interface {@interface}: {@interface.IsGenericType}, {@interface.GetGenericTypeDefinition()}");
+                    }
                     if (@interface.IsGenericType && @interface.GetGenericTypeDefinition() == typeof(IDiffer<>)) {
                         Console.WriteLine($"Found {@interface} implementation {type}.");
                         differTypeNameForDiffableTypeName[ToExpression(@interface.GetGenericArguments()[0])] = ToExpression(type);

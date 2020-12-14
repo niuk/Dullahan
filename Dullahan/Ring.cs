@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 
 namespace Dullahan {
-    public class Ring<T> : IEnumerable<T> {
+    public class Ring<T> : IList<T> {
         public int bufferStart = 0;
         public T[] buffer = new T[1];
 
@@ -12,6 +12,8 @@ namespace Dullahan {
         public int Count { get; private set; } = 0;
 
         public int End => Start + Count;
+
+        bool ICollection<T>.IsReadOnly => false;
 
         public void Clear() {
             bufferStart = 0;
@@ -178,6 +180,39 @@ namespace Dullahan {
 
         IEnumerator IEnumerable.GetEnumerator() {
             return GetEnumerator();
+        }
+
+        public int IndexOf(T item) {
+            for (int i = Start; i < End; ++i) {
+                if (Equals(this[i], item)) {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        public void Add(T item) {
+            PushEnd(item);
+        }
+
+        public bool Contains(T item) {
+            return IndexOf(item) >= 0;
+        }
+
+        public void CopyTo(T[] array, int arrayIndex) {
+            for (int i = Start; i < End; ++i) {
+                array[arrayIndex + i] = this[i];
+            }
+        }
+
+        public bool Remove(T item) {
+            int index = IndexOf(item);
+            if (index >= 0) {
+                RemoveAt(index);
+            }
+
+            return index >= 0;
         }
 
         private class Enumerator : IEnumerator<T> {

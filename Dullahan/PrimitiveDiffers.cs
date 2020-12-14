@@ -33,4 +33,26 @@ namespace Dullahan {
             item = reader.ReadSingle();
         }
     }
+
+    public class DoubleDiffer : IDiffer<double> {
+        public bool Diff(double oldItem, double newItem, BinaryWriter writer) {
+            writer.Write(newItem);
+            return oldItem != newItem;
+        }
+
+        public void Patch(ref double item, BinaryReader reader) {
+            item = reader.ReadDouble();
+        }
+    }
+
+    public class CharDiffer : IDiffer<char> {
+        public bool Diff(char oldItem, char newItem, BinaryWriter writer) {
+            writer.Write(newItem);
+            return oldItem != newItem;
+        }
+
+        public void Patch(ref char item, BinaryReader reader) {
+            item = reader.ReadChar();
+        }
+    }
 }

@@ -15,17 +15,24 @@ namespace {@namespace} {{
         public sealed class {systemType.Name}_Implementation : {systemType.FullName} {{
 ";
 
-            foreach (var (observerName, observedIComponentTypes) in systemType.GetObserverNameAndObservedIComponentTypes()) {
-                var isTuple = observedIComponentTypes.Count() > 1;
+            foreach (var (observerName, observedTypes, isSingleton) in systemType.GetObserverNameAndObservedTypes()) {
+                var isTuple = observedTypes.Length > 1;
                 var tuplePrefix = isTuple ? "(" : "";
                 var tupleSuffix = isTuple ? ")" : "";
-                var observedIComponentTypeNames = string.Join(", ", observedIComponentTypes.Select(t => t.FullName));
-                var observedIComponentPropertyNames = string.Join(", ", observedIComponentTypes.Select(t => $"({t.FullName})entity.{t.Name[1..].Decapitalize()}"));
-                systemImplementation += $@"
-            public readonly HashSet<Entity> {observerName}_collection = new HashSet<Entity>();
-            protected override IEnumerable<{tuplePrefix}{observedIComponentTypeNames}{tupleSuffix}> {
-                    observerName} => {observerName}_collection.Select(entity => {tuplePrefix}{observedIComponentPropertyNames}{tupleSuffix});
+                var observedIComponentTypeNames = string.Join(", ", observedTypes.Select(t => t.FullName));
+                var observedIComponentPropertyNames = string.Join(", ", observedTypes.Select(t => $"({t.FullName}){observerName}_entity.{t.Name[1..].Decapitalize()}"));
+                if (isSingleton) {
+                    systemImplementation += $@"
+            public Entity {observerName}_entity = null;
+            protected override {tuplePrefix}{observedIComponentTypeNames}{tupleSuffix} {observerName} => {tuplePrefix}{observedIComponentPropertyNames}{tupleSuffix};
 ";
+                } else {
+                    systemImplementation += $@"
+            public readonly HashSet<Entity> {observerName}_entities = new HashSet<Entity>();
+            protected override IEnumerable<{tuplePrefix}{observedIComponentTypeNames}{tupleSuffix}> {
+                        observerName} => {observerName}_entities.Select({observerName}_entity => {tuplePrefix}{observedIComponentPropertyNames}{tupleSuffix});
+";
+                }
             }
 
             systemImplementation += @"

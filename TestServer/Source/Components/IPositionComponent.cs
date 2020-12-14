@@ -1,6 +1,6 @@
 ﻿namespace TestGame {
     public interface IPositionComponent : Dullahan.ECS.IComponent {
-        int x { get; set; }
-        int y { get; set; }
+        float x { get; set; }
+        float y { get; set; }
     }
 }

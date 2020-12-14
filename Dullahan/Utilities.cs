@@ -1,5 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 
 namespace Dullahan {
     public static class Utilities {
@@ -38,6 +41,20 @@ namespace Dullahan {
             var item = sortedList.Values[end];
             sortedList.RemoveAt(end);
             return item;
+        }
+
+        public static void FixedTimer(Action<int> callback, TimeSpan interval, CancellationToken cancellationToken) {
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+            int nextTick = 1;
+            while (!cancellationToken.IsCancellationRequested) {
+                var elapsed = stopwatch.Elapsed;
+                if (nextTick * interval.TotalSeconds > elapsed.TotalSeconds) {
+                    Thread.Sleep(TimeSpan.FromSeconds(nextTick * interval.TotalSeconds - elapsed.TotalSeconds));
+                } else {
+                    callback(nextTick++);
+                }
+            }
         }
     }
 }

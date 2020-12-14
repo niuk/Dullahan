@@ -30,25 +30,35 @@ namespace Dullahan.Network {
             return clientsByPort[port].AckingRemoteTick;
         }
 
+        public long GetTotalBytesSent(int port) {
+            return clientsByPort[port].totalBytesSent;
+        }
+
+        public long GetTotalBytesReceived(int port) {
+            return clientsByPort[port].totalBytesReceived;
+        }
+
         private readonly Dictionary<int, Client<TServerState, TClientState>> clientsByPort = new Dictionary<int, Client<TServerState, TClientState>>();
         private bool disposedValue;
 
         public Server(
+            TClientState initialClientState,
             IReadOnlyDictionary<int, TServerState> serverStatesByTick,
             IDiffer<TServerState> serverStateDiffer,
             IDiffer<TClientState> clientStateDiffer,
             int portStart,
             int capacity,
-            TimeSpan sendRate
+            TimeSpan sendInterval
         ) {
             for (int port = portStart; port < portStart + capacity; ++port) {
                 clientsByPort.Add(port, new Client<TServerState, TClientState>(
+                    initialClientState,
                     serverStatesByTick,
                     serverStateDiffer,
                     clientStateDiffer,
                     new IPEndPoint(IPAddress.Any, port),
                     new IPEndPoint(IPAddress.Any, 0),
-                    sendRate));
+                    sendInterval));
             }
         }
 
